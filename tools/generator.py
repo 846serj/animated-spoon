@@ -1,0 +1,141 @@
+"""
+Enhanced LLM-based content generation for recipes with multi-section article structure.
+"""
+
+import openai
+from config import *
+from .prompt_templates import (
+    extract_context, 
+    INTRO_TEMPLATE, 
+    RECIPE_SECTION_TEMPLATE, 
+    COOKING_TIPS_TEMPLATE, 
+    CONCLUSION_TEMPLATE
+)
+
+def generate_article(query, recipes_list):
+    """Generate a complete multi-section article."""
+    if not recipes_list:
+        return "No recipes found."
+    
+    # Extract context
+    context = extract_context(query)
+    
+    # Generate each section
+    intro = generate_intro(query, context)
+    recipe_sections = generate_recipe_sections(recipes_list, context)
+    cooking_tips = generate_cooking_tips(context)
+    conclusion = generate_conclusion(query, context)
+    
+    # Combine into complete article
+    article = f"""<h1>{query.title()}</h1>
+
+{intro}
+
+<h2>Featured Recipes</h2>
+{recipe_sections}
+
+<h2>Cooking Tips for {context['cuisine'].title()} Cuisine</h2>
+{cooking_tips}
+
+<h2>Conclusion</h2>
+{conclusion}"""
+    
+    return article
+
+def generate_intro(query, context):
+    """Generate article introduction."""
+    try:
+        response = openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a professional food writer who creates engaging, appetizing content."},
+                {"role": "user", "content": INTRO_TEMPLATE.format(
+                    query=query,
+                    cuisine=context['cuisine'],
+                    number=context['number']
+                )}
+            ],
+            max_tokens=500,
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error generating intro: {e}")
+        return f"<p>Welcome to our collection of {context['cuisine']} recipes!</p>"
+
+def generate_recipe_sections(recipes_list, context):
+    """Generate individual recipe sections."""
+    sections = []
+    
+    for recipe in recipes_list:
+        try:
+            response = openai.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a professional food writer who creates engaging, appetizing content."},
+                    {"role": "user", "content": RECIPE_SECTION_TEMPLATE.format(
+                        cuisine=context['cuisine'],
+                        title=recipe['title'],
+                        description=recipe['description']
+                    )}
+                ],
+                max_tokens=400,
+                temperature=0.7
+            )
+            
+            section = f"<h3>{recipe['title']}</h3>\n{response.choices[0].message.content}"
+            if recipe.get('url'):
+                section += f'\n<p><a href="{recipe["url"]}">View Full Recipe</a></p>'
+            sections.append(section)
+            
+        except Exception as e:
+            print(f"Error generating section for {recipe['title']}: {e}")
+            sections.append(f"<h3>{recipe['title']}</h3><p>{recipe['description']}</p>")
+    
+    return "\n\n".join(sections)
+
+def generate_cooking_tips(context):
+    """Generate cooking tips section."""
+    try:
+        response = openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a professional food writer who creates engaging, appetizing content."},
+                {"role": "user", "content": COOKING_TIPS_TEMPLATE.format(cuisine=context['cuisine'])}
+            ],
+            max_tokens=400,
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error generating cooking tips: {e}")
+        return f"<p>Master the art of {context['cuisine']} cooking with these essential tips.</p>"
+
+def generate_conclusion(query, context):
+    """Generate article conclusion."""
+    try:
+        response = openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a professional food writer who creates engaging, appetizing content."},
+                {"role": "user", "content": CONCLUSION_TEMPLATE.format(
+                    query=query,
+                    cuisine=context['cuisine']
+                )}
+            ],
+            max_tokens=300,
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error generating conclusion: {e}")
+        return f"<p>We hope you enjoy exploring these {context['cuisine']} recipes!</p>"
+
+# Legacy function for backward compatibility
+def generate_summary(recipes_list):
+    """Legacy function - now generates a simple summary."""
+    if not recipes_list:
+        return "No recipes found."
+    
+    recipe_titles = [recipe['title'] for recipe in recipes_list]
+    return f"<h2>Found Recipes</h2><ul>" + "".join([f"<li>{title}</li>" for title in recipe_titles]) + "</ul>"
