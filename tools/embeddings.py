@@ -14,6 +14,9 @@ def generate_embeddings(recipes):
     """Generate embeddings for a list of recipes."""
     print(f"Generating embeddings for {len(recipes)} recipes...")
     
+    # Use smaller batch size for memory efficiency
+    batch_size = min(BATCH_SIZE, 25)  # Cap at 25 for memory efficiency
+    
     # Prepare text for embedding
     texts = []
     for recipe in recipes:
@@ -22,9 +25,9 @@ def generate_embeddings(recipes):
     
     # Generate embeddings in batches
     embeddings = []
-    for i in range(0, len(texts), BATCH_SIZE):
-        batch = texts[i:i + BATCH_SIZE]
-        print(f"Processing batch {i//BATCH_SIZE + 1}/{(len(texts) + BATCH_SIZE - 1)//BATCH_SIZE}")
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        print(f"Processing batch {i//batch_size + 1}/{(len(texts) + batch_size - 1)//batch_size}")
         
         response = openai.embeddings.create(
             model=EMBEDDING_MODEL,

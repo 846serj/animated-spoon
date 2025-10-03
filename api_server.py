@@ -40,8 +40,9 @@ def load_data():
     print(f"Loaded {len(recipes)} recipes")
 
 def setup_data():
-    """Set up recipe data from Airtable."""
+    """Set up recipe data from Airtable with memory optimization."""
     import os
+    import gc
     
     print("1. Creating data directory...")
     os.makedirs("data", exist_ok=True)
@@ -49,14 +50,43 @@ def setup_data():
     print("2. Fetching recipes from Airtable...")
     recipes = airtable_sync.fetch_airtable_records()
     
-    print("3. Generating embeddings...")
-    recipes_with_embeddings = embeddings.generate_embeddings(recipes)
+    # Save raw recipes first
+    print("3. Saving raw recipes...")
+    import json
+    with open("data/recipes.json", "w") as f:
+        json.dump(recipes, f, indent=2)
     
-    print("4. Saving embeddings...")
+    print("4. Generating embeddings in smaller batches...")
+    # Process in smaller batches to reduce memory usage
+    batch_size = 50  # Smaller batch size
+    recipes_with_embeddings = []
+    
+    for i in range(0, len(recipes), batch_size):
+        batch = recipes[i:i + batch_size]
+        print(f"Processing batch {i//batch_size + 1}/{(len(recipes) + batch_size - 1)//batch_size}")
+        
+        batch_embeddings = embeddings.generate_embeddings(batch)
+        recipes_with_embeddings.extend(batch_embeddings)
+        
+        # Force garbage collection to free memory
+        del batch_embeddings
+        gc.collect()
+    
+    print("5. Saving embeddings...")
     embeddings.save_embeddings(recipes_with_embeddings)
     
-    print("5. Building FAISS index...")
+    # Clear memory before building index
+    del recipes_with_embeddings
+    gc.collect()
+    
+    print("6. Building FAISS index...")
+    # Reload embeddings for index building
+    recipes_with_embeddings = embeddings.load_embeddings()
     vector_store.build_faiss_index(recipes_with_embeddings)
+    
+    # Final cleanup
+    del recipes_with_embeddings
+    gc.collect()
     
     print("Data setup complete!")
 
