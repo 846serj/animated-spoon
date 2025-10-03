@@ -236,7 +236,18 @@ Write a complete article that includes:
 3. Tips and variations
 4. A conclusion
 
-Make it professional, engaging, and practical for home cooks."""
+Make it professional, engaging, and practical for home cooks.
+
+IMPORTANT: Format the article using HTML tags instead of markdown:
+- Use <h2> for main headings
+- Use <h3> for recipe titles
+- Use <h4> for section headings like "Ingredients:" and "Instructions:"
+- Use <ul> and <li> for lists
+- Use <p> for paragraphs
+- Use <strong> for bold text
+- Use <em> for italic text
+
+Do NOT use markdown syntax like #, ##, ###, ####, or **."""
 
         response = openai.chat.completions.create(
             model="gpt-4-turbo",
