@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Direct Airtable recipe server - queries Airtable directly, no pre-computed data needed.
-Much faster and more efficient approach.
+Recipe server with local data storage - downloads all Airtable data once,
+then searches through it efficiently without re-generating embeddings.
 """
 
 import sys
@@ -11,6 +11,8 @@ import numpy as np
 import openai
 import re
 import requests
+import threading
+import time
 from flask import Flask, request, jsonify
 
 # Add current directory to path
@@ -18,89 +20,165 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__)
 
-def fetch_recipes_from_airtable(query_text="", limit=50):
-    """Fetch recipes from Airtable with optional text filtering."""
-    api_key = os.getenv("AIRTABLE_API_KEY")
-    base_id = os.getenv("AIRTABLE_BASE_ID", "appa4SaUbDRFYM42O")
-    table_name = os.getenv("AIRTABLE_TABLE_NAME", "Molly's View")
-    
-    if not api_key:
-        raise Exception("AIRTABLE_API_KEY environment variable not set")
-    
-    url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    
-    # Build query parameters
-    params = {
-        "pageSize": min(limit, 100),  # Airtable max is 100
-        "sort[0][field]": "Title",
-        "sort[0][direction]": "asc"
-    }
-    
-    # Skip Airtable filtering for now - we'll do it in our code
-    # This avoids complex formula syntax issues
-    
-    all_records = []
-    offset = None
-    
-    while len(all_records) < limit:
-        if offset:
-            params["offset"] = offset
-            
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        
-        data = response.json()
-        all_records.extend(data["records"])
-        
-        if "offset" in data and len(all_records) < limit:
-            offset = data["offset"]
-        else:
-            break
-    
-    # Convert Airtable records to recipe format
-    recipes = []
-    for record in all_records[:limit]:
-        fields = record.get("fields", {})
-        recipe = {
-            "id": record["id"],
-            "title": fields.get("Title", "Untitled Recipe"),
-            "ingredients": fields.get("Ingredients", ""),
-            "instructions": fields.get("Instructions", ""),
-            "url": fields.get("URL", ""),
-            "cuisine": fields.get("Cuisine", ""),
-            "meal_type": fields.get("Meal Type", ""),
-            "difficulty": fields.get("Difficulty", ""),
-            "prep_time": fields.get("Prep Time", ""),
-            "cook_time": fields.get("Cook Time", ""),
-            "servings": fields.get("Servings", ""),
-            "tags": fields.get("Tags", ""),
-        }
-        recipes.append(recipe)
-    
-    return recipes
+# Global variables for cached data
+recipes_cache = None
+cache_ready = False
+cache_progress = "Starting..."
 
-def generate_embedding(text):
-    """Generate embedding for a single text."""
-    openai.api_key = os.getenv("OPENAI_API_KEY")
+def fetch_all_recipes_from_airtable():
+    """Fetch ALL recipes from Airtable and cache them locally."""
+    global recipes_cache, cache_ready, cache_progress
     
-    response = openai.embeddings.create(
-        model="text-embedding-3-small",
-        input=text
-    )
+    try:
+        cache_progress = "Fetching recipes from Airtable..."
+        
+        api_key = os.getenv("AIRTABLE_API_KEY")
+        base_id = os.getenv("AIRTABLE_BASE_ID", "appa4SaUbDRFYM42O")
+        table_name = os.getenv("AIRTABLE_TABLE_NAME", "Molly's View")
+        
+        if not api_key:
+            raise Exception("AIRTABLE_API_KEY environment variable not set")
+        
+        url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        
+        # Fetch ALL recipes (no limit)
+        params = {
+            "pageSize": 100,  # Airtable max per request
+            "sort[0][field]": "Title",
+            "sort[0][direction]": "asc"
+        }
+        
+        all_records = []
+        offset = None
+        batch_count = 0
+        
+        while True:
+            if offset:
+                params["offset"] = offset
+            
+            batch_count += 1
+            cache_progress = f"Fetching batch {batch_count} from Airtable..."
+            
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            
+            data = response.json()
+            all_records.extend(data["records"])
+            
+            cache_progress = f"Fetched {len(all_records)} recipes so far..."
+            
+            if "offset" in data:
+                offset = data["offset"]
+            else:
+                break
+        
+        # Convert Airtable records to recipe format
+        recipes = []
+        for record in all_records:
+            fields = record.get("fields", {})
+            recipe = {
+                "id": record["id"],
+                "title": fields.get("Title", "Untitled Recipe"),
+                "ingredients": fields.get("Ingredients", ""),
+                "instructions": fields.get("Instructions", ""),
+                "url": fields.get("URL", ""),
+                "cuisine": fields.get("Cuisine", ""),
+                "meal_type": fields.get("Meal Type", ""),
+                "difficulty": fields.get("Difficulty", ""),
+                "prep_time": fields.get("Prep Time", ""),
+                "cook_time": fields.get("Cook Time", ""),
+                "servings": fields.get("Servings", ""),
+                "tags": fields.get("Tags", ""),
+            }
+            recipes.append(recipe)
+        
+        # Save to local file for persistence
+        cache_progress = "Saving recipes to local cache..."
+        os.makedirs("data", exist_ok=True)
+        with open("data/recipes_cache.json", "w") as f:
+            json.dump(recipes, f, indent=2)
+        
+        recipes_cache = recipes
+        cache_ready = True
+        cache_progress = f"Cache ready! Loaded {len(recipes)} recipes"
+        
+        print(f"Successfully cached {len(recipes)} recipes from Airtable")
+        
+    except Exception as e:
+        cache_progress = f"Error: {str(e)}"
+        print(f"Error fetching recipes: {e}")
+
+def load_cached_recipes():
+    """Load recipes from local cache if available."""
+    global recipes_cache, cache_ready, cache_progress
     
-    return response.data[0].embedding
+    try:
+        if os.path.exists("data/recipes_cache.json"):
+            cache_progress = "Loading recipes from local cache..."
+            with open("data/recipes_cache.json", "r") as f:
+                recipes_cache = json.load(f)
+            cache_ready = True
+            cache_progress = f"Cache loaded! {len(recipes_cache)} recipes ready"
+            print(f"Loaded {len(recipes_cache)} recipes from cache")
+            return True
+    except Exception as e:
+        cache_progress = f"Cache load error: {str(e)}"
+        print(f"Error loading cache: {e}")
+    
+    return False
+
+def search_recipes_text(query, recipes, k=5):
+    """Fast text-based search through all recipes."""
+    query_lower = query.lower()
+    query_words = query_lower.split()
+    
+    scored_recipes = []
+    
+    for recipe in recipes:
+        score = 0
+        text = f"{recipe['title']} {recipe['ingredients']} {recipe['instructions']}".lower()
+        
+        # Score based on word matches
+        for word in query_words:
+            if word in text:
+                # Higher score for title matches
+                if word in recipe['title'].lower():
+                    score += 10
+                # Medium score for ingredient matches
+                elif word in recipe['ingredients'].lower():
+                    score += 5
+                # Lower score for instruction matches
+                else:
+                    score += 1
+        
+        # Bonus for exact phrase matches
+        if query_lower in text:
+            score += 20
+        
+        if score > 0:
+            scored_recipes.append((recipe, score))
+    
+    # Sort by score and return top k
+    scored_recipes.sort(key=lambda x: x[1], reverse=True)
+    return [recipe for recipe, score in scored_recipes[:k]]
 
 def search_recipes_semantic(query, recipes, k=5):
-    """Search recipes using semantic similarity."""
+    """Semantic search using embeddings (only for top text matches)."""
     try:
+        # First do fast text search to get top candidates
+        text_matches = search_recipes_text(query, recipes, k=20)  # Get more candidates
+        
+        if len(text_matches) < 5:
+            return text_matches  # Not enough matches for semantic search
+        
         # Generate embedding for query
+        openai.api_key = os.getenv("OPENAI_API_KEY")
         query_embedding = generate_embedding(query)
         
-        # Generate embeddings for recipes and calculate similarities
+        # Generate embeddings for top candidates only
         recipe_scores = []
-        for recipe in recipes:
-            # Create text for embedding
+        for recipe in text_matches:
             recipe_text = f"{recipe['title']} {recipe['ingredients']} {recipe['instructions']}"
             recipe_embedding = generate_embedding(recipe_text)
             
@@ -113,34 +191,23 @@ def search_recipes_semantic(query, recipes, k=5):
         
         # Sort by similarity and return top k
         recipe_scores.sort(key=lambda x: x[1], reverse=True)
-        top_recipes = [recipe for recipe, score in recipe_scores[:k]]
+        return [recipe for recipe, score in recipe_scores[:k]]
         
-        return top_recipes
     except Exception as e:
-        print(f"Error in semantic search: {e}")
-        # Fallback to simple text search
+        print(f"Semantic search error: {e}")
+        # Fallback to text search
         return search_recipes_text(query, recipes, k)
 
-def search_recipes_text(query, recipes, k=5):
-    """Fallback text search."""
-    query_lower = query.lower()
-    scored_recipes = []
+def generate_embedding(text):
+    """Generate embedding for a single text."""
+    openai.api_key = os.getenv("OPENAI_API_KEY")
     
-    for recipe in recipes:
-        score = 0
-        text = f"{recipe['title']} {recipe['ingredients']} {recipe['instructions']}".lower()
-        
-        # Simple scoring based on keyword matches
-        for word in query_lower.split():
-            if word in text:
-                score += text.count(word)
-        
-        if score > 0:
-            scored_recipes.append((recipe, score))
+    response = openai.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
     
-    # Sort by score and return top k
-    scored_recipes.sort(key=lambda x: x[1], reverse=True)
-    return [recipe for recipe, score in scored_recipes[:k]]
+    return response.data[0].embedding
 
 def generate_article(query, recipes):
     """Generate article from recipes."""
@@ -189,6 +256,14 @@ def generate_recipe_article():
     try:
         print("=== Recipe Query Started ===")
         
+        if not cache_ready:
+            print("Cache not ready yet")
+            return jsonify({
+                'error': 'Recipe cache not ready yet',
+                'progress': cache_progress,
+                'status': 'loading'
+            }), 503
+        
         data = request.get_json()
         query = data.get('query', '')
         
@@ -204,11 +279,6 @@ def generate_recipe_article():
         print(f"Extracted k={k} from query")
         
         # Check environment variables
-        api_key = os.getenv("AIRTABLE_API_KEY")
-        if not api_key:
-            print("Error: AIRTABLE_API_KEY not set")
-            return jsonify({'error': 'AIRTABLE_API_KEY environment variable not set'}), 500
-        
         openai_key = os.getenv("OPENAI_API_KEY")
         if not openai_key:
             print("Error: OPENAI_API_KEY not set")
@@ -216,28 +286,15 @@ def generate_recipe_article():
         
         print("Environment variables OK")
         
-        # Fetch recipes from Airtable (with text filtering)
-        print("Fetching recipes from Airtable...")
+        # Search through all cached recipes
+        print(f"Searching through {len(recipes_cache)} cached recipes...")
         try:
-            recipes = fetch_recipes_from_airtable(query_text=query, limit=100)
-            print(f"Fetched {len(recipes)} recipes")
-        except Exception as e:
-            print(f"Error fetching from Airtable: {e}")
-            return jsonify({'error': f'Airtable error: {str(e)}'}), 500
-        
-        if not recipes:
-            print("No recipes found")
-            return jsonify({'error': 'No recipes found'}), 404
-        
-        # Search for most relevant recipes
-        print("Searching for most relevant recipes...")
-        try:
-            top_recipes = search_recipes_semantic(query, recipes, k=k)
+            top_recipes = search_recipes_semantic(query, recipes_cache, k=k)
             print(f"Found {len(top_recipes)} relevant recipes")
         except Exception as e:
             print(f"Error in semantic search: {e}")
-            # Fallback to simple text search
-            top_recipes = search_recipes_text(query, recipes, k=k)
+            # Fallback to text search
+            top_recipes = search_recipes_text(query, recipes_cache, k=k)
             print(f"Fallback found {len(top_recipes)} recipes")
         
         if not top_recipes:
@@ -262,7 +319,8 @@ def generate_recipe_article():
             'article': article,
             'sources': sources,
             'recipe_count': len(top_recipes),
-            'query': query
+            'query': query,
+            'total_recipes_searched': len(recipes_cache)
         })
         
     except Exception as e:
@@ -277,10 +335,13 @@ def generate_recipe_article():
 def root():
     """Root endpoint."""
     return jsonify({
-        'message': 'Direct Airtable Recipe Server',
+        'message': 'Local Cache Recipe Server',
         'status': 'running',
-        'description': 'Queries Airtable directly - no pre-computed data needed',
-        'endpoints': ['/api/recipe-query', '/health']
+        'cache_ready': cache_ready,
+        'progress': cache_progress,
+        'recipes_loaded': len(recipes_cache) if recipes_cache else 0,
+        'description': 'Downloads all Airtable data once, then searches locally',
+        'endpoints': ['/api/recipe-query', '/health', '/status']
     })
 
 @app.route('/health', methods=['GET'])
@@ -288,12 +349,32 @@ def health():
     """Health check endpoint."""
     return jsonify({
         'status': 'healthy',
-        'description': 'Direct Airtable access - always ready'
+        'cache_ready': cache_ready,
+        'progress': cache_progress,
+        'recipes_loaded': len(recipes_cache) if recipes_cache else 0
+    })
+
+@app.route('/status', methods=['GET'])
+def status():
+    """Status endpoint for cache progress."""
+    return jsonify({
+        'cache_ready': cache_ready,
+        'progress': cache_progress,
+        'recipes_loaded': len(recipes_cache) if recipes_cache else 0
     })
 
 if __name__ == '__main__':
-    print("Starting direct Airtable recipe server...")
-    print("No data generation needed - queries Airtable directly!")
+    print("Starting local cache recipe server...")
+    
+    # Try to load from cache first
+    if not load_cached_recipes():
+        print("No cache found. Starting background download...")
+        # Start background thread to fetch all recipes
+        thread = threading.Thread(target=fetch_all_recipes_from_airtable)
+        thread.daemon = True
+        thread.start()
+    
+    print("Server ready! (Cache may be loading in background)")
     
     # Get port from environment variable
     port = int(os.environ.get('PORT', 3004))
