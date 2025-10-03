@@ -13,6 +13,7 @@ import re
 import requests
 import threading
 import time
+import faiss
 from flask import Flask, request, jsonify
 
 # Add current directory to path
@@ -22,6 +23,7 @@ app = Flask(__name__)
 
 # Global variables for cached data
 recipes_cache = None
+faiss_index = None
 cache_ready = False
 cache_progress = "Starting..."
 
@@ -100,27 +102,87 @@ def fetch_all_recipes_from_airtable():
             json.dump(recipes, f, indent=2)
         
         recipes_cache = recipes
-        cache_ready = True
-        cache_progress = f"Cache ready! Loaded {len(recipes)} recipes"
         
-        print(f"Successfully cached {len(recipes)} recipes from Airtable")
+        # Build FAISS index for semantic search
+        cache_progress = "Building FAISS index for semantic search..."
+        build_faiss_index(recipes)
+        
+        cache_ready = True
+        cache_progress = f"Cache ready! Loaded {len(recipes)} recipes with FAISS index"
+        
+        print(f"Successfully cached {len(recipes)} recipes from Airtable with FAISS index")
         
     except Exception as e:
         cache_progress = f"Error: {str(e)}"
         print(f"Error fetching recipes: {e}")
 
-def load_cached_recipes():
-    """Load recipes from local cache if available."""
-    global recipes_cache, cache_ready, cache_progress
+def build_faiss_index(recipes):
+    """Build FAISS index for semantic search."""
+    global faiss_index
     
     try:
-        if os.path.exists("data/recipes_cache.json"):
+        cache_progress = "Generating embeddings for FAISS index..."
+        
+        # Generate embeddings in batches
+        batch_size = 50
+        all_embeddings = []
+        
+        for i in range(0, len(recipes), batch_size):
+            batch = recipes[i:i + batch_size]
+            batch_texts = []
+            
+            for recipe in batch:
+                text = f"{recipe['title']} {recipe['ingredients']} {recipe['instructions']}"
+                batch_texts.append(text)
+            
+            # Generate embeddings for batch
+            openai.api_key = os.getenv("OPENAI_API_KEY")
+            response = openai.embeddings.create(
+                model="text-embedding-3-small",
+                input=batch_texts
+            )
+            
+            # Add embeddings to list
+            for embedding_data in response.data:
+                all_embeddings.append(embedding_data.embedding)
+            
+            cache_progress = f"Generated embeddings for {len(all_embeddings)}/{len(recipes)} recipes"
+        
+        # Create FAISS index
+        cache_progress = "Creating FAISS index..."
+        embeddings_matrix = np.array(all_embeddings, dtype=np.float32)
+        
+        # Create FAISS index (Inner Product for cosine similarity)
+        dimension = embeddings_matrix.shape[1]
+        faiss_index = faiss.IndexFlatIP(dimension)
+        faiss_index.add(embeddings_matrix)
+        
+        # Save FAISS index
+        faiss.write_index(faiss_index, "data/recipes_faiss.index")
+        
+        cache_progress = f"FAISS index built! {len(recipes)} recipes indexed"
+        print(f"Built FAISS index with {len(recipes)} recipes")
+        
+    except Exception as e:
+        cache_progress = f"FAISS index error: {str(e)}"
+        print(f"Error building FAISS index: {e}")
+
+def load_cached_recipes():
+    """Load recipes from local cache if available."""
+    global recipes_cache, faiss_index, cache_ready, cache_progress
+    
+    try:
+        if os.path.exists("data/recipes_cache.json") and os.path.exists("data/recipes_faiss.index"):
             cache_progress = "Loading recipes from local cache..."
             with open("data/recipes_cache.json", "r") as f:
                 recipes_cache = json.load(f)
+            
+            cache_progress = "Loading FAISS index..."
+            faiss_index = faiss.read_index("data/recipes_faiss.index")
+            
             cache_ready = True
-            cache_progress = f"Cache loaded! {len(recipes_cache)} recipes ready"
-            print(f"Loaded {len(recipes_cache)} recipes from cache")
+            cache_progress = f"Cache loaded! {len(recipes_cache)} recipes with FAISS index ready"
+            print(f"Loaded {len(recipes_cache)} recipes with FAISS index from cache")
             return True
     except Exception as e:
         cache_progress = f"Cache load error: {str(e)}"
@@ -164,37 +226,34 @@ def search_recipes_text(query, recipes, k=5):
     return [recipe for recipe, score in scored_recipes[:k]]
 
 def search_recipes_semantic(query, recipes, k=5):
-    """Semantic search using embeddings (only for top text matches)."""
+    """Semantic search using FAISS index."""
+    global faiss_index
+    
     try:
-        # First do fast text search to get top candidates
-        text_matches = search_recipes_text(query, recipes, k=20)  # Get more candidates
-        
-        if len(text_matches) < 5:
-            return text_matches  # Not enough matches for semantic search
+        if faiss_index is None:
+            print("FAISS index not available, falling back to text search")
+            return search_recipes_text(query, recipes, k)
         
         # Generate embedding for query
         openai.api_key = os.getenv("OPENAI_API_KEY")
         query_embedding = generate_embedding(query)
         
-        # Generate embeddings for top candidates only
-        recipe_scores = []
-        for recipe in text_matches:
-            recipe_text = f"{recipe['title']} {recipe['ingredients']} {recipe['instructions']}"
-            recipe_embedding = generate_embedding(recipe_text)
-            
-            # Calculate cosine similarity
-            similarity = np.dot(query_embedding, recipe_embedding) / (
-                np.linalg.norm(query_embedding) * np.linalg.norm(recipe_embedding)
-            )
-            
-            recipe_scores.append((recipe, similarity))
+        # Search FAISS index
+        query_vector = np.array([query_embedding], dtype=np.float32)
+        scores, indices = faiss_index.search(query_vector, k)
         
-        # Sort by similarity and return top k
-        recipe_scores.sort(key=lambda x: x[1], reverse=True)
-        return [recipe for recipe, score in recipe_scores[:k]]
+        # Get top recipes
+        top_recipes = []
+        for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
+            if idx < len(recipes):
+                recipe = recipes[idx].copy()
+                recipe['similarity_score'] = float(score)
+                top_recipes.append(recipe)
+        
+        return top_recipes
         
     except Exception as e:
-        print(f"Semantic search error: {e}")
+        print(f"FAISS semantic search error: {e}")
         # Fallback to text search
         return search_recipes_text(query, recipes, k)
 
@@ -210,7 +269,21 @@ def generate_embedding(text):
     return response.data[0].embedding
 
 def generate_article(query, recipes):
-    """Generate article from recipes."""
+    """Generate article using systematic approach."""
+    try:
+        # Import the systematic generator
+        from tools.generator import generate_article as systematic_generate
+        
+        # Use the systematic approach
+        return systematic_generate(query, recipes)
+        
+    except Exception as e:
+        print(f"Error with systematic generation: {e}")
+        # Fallback to simple generation
+        return generate_article_simple(query, recipes)
+
+def generate_article_simple(query, recipes):
+    """Fallback simple article generation."""
     try:
         openai.api_key = os.getenv("OPENAI_API_KEY")
         
