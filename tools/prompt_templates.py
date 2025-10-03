@@ -42,13 +42,13 @@ def extract_context(query):
     }
 
 # Prompt Templates
-INTRO_TEMPLATE = """Write a compelling 2-3 paragraph introduction for an article titled "{query}".
+INTRO_TEMPLATE = """Write a compelling single paragraph introduction for an article titled "{query}".
 
 Create anticipation and set the scene for {cuisine} cuisine. Mention what makes {cuisine} food special and what readers will discover in this collection of {number} recipes.
 
 Write in an engaging, warm tone that makes readers excited to cook these dishes.
 
-Format the response as HTML with <h2>Introduction</h2> followed by <p> tags for paragraphs."""
+IMPORTANT: Format the response as HTML with <h2>Introduction</h2> followed by a single <p> tag. The paragraph must be wrapped in <p> and </p> tags."""
 
 RECIPE_SECTION_TEMPLATE = """Write exactly 2 paragraphs about this {cuisine} recipe:
 
@@ -81,4 +81,4 @@ Tie everything together and encourage readers to try these {cuisine} recipes. En
 
 Keep it warm and encouraging.
 
-Format the response as HTML with <h2>Conclusion</h2> followed by <p> tags for paragraphs."""
+IMPORTANT: Format the response as HTML with <h2>Conclusion</h2> followed by <p> tags for each paragraph. Each paragraph must be wrapped in <p> and </p> tags."""

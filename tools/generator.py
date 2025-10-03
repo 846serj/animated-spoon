@@ -50,10 +50,21 @@ def generate_intro(query, context):
             max_tokens=500,
             temperature=0.7
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content.strip()
+        
+        # Ensure content is properly formatted as HTML paragraphs
+        if not content.startswith('<p>') and not content.startswith('<h2>'):
+            # Split into paragraphs and wrap each in <p> tags
+            paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
+            if paragraphs:
+                content = '\n\n'.join([f'<p>{p}</p>' for p in paragraphs])
+            else:
+                content = f'<p>{content}</p>'
+        
+        return content
     except Exception as e:
         print(f"Error generating intro: {e}")
-        return f"<p>Welcome to our collection of {context['cuisine']} recipes!</p>"
+        return f"<h2>Introduction</h2><p>Welcome to our collection of {context['cuisine']} recipes!</p>"
 
 def generate_recipe_sections(recipes_list, context):
     """Generate individual recipe sections."""
@@ -84,7 +95,19 @@ def generate_recipe_sections(recipes_list, context):
             if image_url and image_url.strip():
                 section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">'
             
-            section += f"\n{response.choices[0].message.content}"
+            # Ensure content is properly formatted as HTML paragraphs
+            content = response.choices[0].message.content.strip()
+            
+            # If content doesn't have <p> tags, wrap it
+            if not content.startswith('<p>'):
+                # Split into paragraphs and wrap each in <p> tags
+                paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
+                if paragraphs:
+                    content = '\n\n'.join([f'<p>{p}</p>' for p in paragraphs])
+                else:
+                    content = f'<p>{content}</p>'
+            
+            section += f"\n{content}"
             
             if recipe.get('url'):
                 section += f'\n<p><a href="{recipe["url"]}">View Full Recipe</a></p>'
@@ -139,10 +162,21 @@ def generate_conclusion(query, context):
             max_tokens=300,
             temperature=0.7
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content.strip()
+        
+        # Ensure content is properly formatted as HTML paragraphs
+        if not content.startswith('<p>') and not content.startswith('<h2>'):
+            # Split into paragraphs and wrap each in <p> tags
+            paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
+            if paragraphs:
+                content = '\n\n'.join([f'<p>{p}</p>' for p in paragraphs])
+            else:
+                content = f'<p>{content}</p>'
+        
+        return content
     except Exception as e:
         print(f"Error generating conclusion: {e}")
-        return f"<p>We hope you enjoy exploring these {context['cuisine']} recipes!</p>"
+        return f"<h2>Conclusion</h2><p>We hope you enjoy exploring these {context['cuisine']} recipes!</p>"
 
 # Legacy function for backward compatibility
 def generate_summary(recipes_list):
