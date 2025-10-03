@@ -79,7 +79,7 @@ def generate_recipe_sections(recipes_list, context):
                     {"role": "user", "content": RECIPE_SECTION_TEMPLATE.format(
                         cuisine=context['cuisine'],
                         title=recipe['title'],
-                        description=f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}"
+                        description=recipe.get('description', '') or f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}"
                     )}
                 ],
                 max_tokens=400,

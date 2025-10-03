@@ -79,6 +79,11 @@ def fetch_all_recipes_from_airtable():
         recipes = []
         for record in all_records:
             fields = record.get("fields", {})
+            
+            # Debug: Print available fields for first record
+            if len(recipes) == 0:
+                print(f"Available Airtable fields: {list(fields.keys())}")
+            
             recipe = {
                 "id": record["id"],
                 "title": fields.get("Title", "Untitled Recipe"),
@@ -96,6 +101,7 @@ def fetch_all_recipes_from_airtable():
                 "image_url": fields.get("Image URL", ""),
                 "photo": fields.get("Photo", ""),
                 "picture": fields.get("Picture", ""),
+                "description": fields.get("Description", ""),
             }
             recipes.append(recipe)
         
