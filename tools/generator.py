@@ -95,9 +95,22 @@ def generate_recipe_sections(recipes_list, context):
             )
             
             # Get image URL from any of the possible image fields
-            image_url = (recipe.get('image_url') or recipe.get('image') or recipe.get('photo') or 
-                        recipe.get('picture') or recipe.get('Image') or recipe.get('Photo') or 
-                        recipe.get('Picture') or recipe.get('Image URL') or recipe.get('Attachments'))
+            image_url = None
+            
+            # Check direct URL fields first
+            for field in ['image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL']:
+                if recipe.get(field):
+                    image_url = recipe.get(field)
+                    break
+            
+            # Check Airtable attachments (array of objects with URL property)
+            if not image_url and recipe.get('attachments'):
+                attachments = recipe.get('attachments')
+                if isinstance(attachments, list) and len(attachments) > 0:
+                    if isinstance(attachments[0], dict) and 'url' in attachments[0]:
+                        image_url = attachments[0]['url']
+                    elif isinstance(attachments[0], str):
+                        image_url = attachments[0]
             
             section = f"<h2>{recipe['title']}</h2>"
             
@@ -126,9 +139,22 @@ def generate_recipe_sections(recipes_list, context):
         except Exception as e:
             print(f"Error generating section for {recipe['title']}: {e}")
             # Get image URL from any of the possible image fields
-            image_url = (recipe.get('image_url') or recipe.get('image') or recipe.get('photo') or 
-                        recipe.get('picture') or recipe.get('Image') or recipe.get('Photo') or 
-                        recipe.get('Picture') or recipe.get('Image URL') or recipe.get('Attachments'))
+            image_url = None
+            
+            # Check direct URL fields first
+            for field in ['image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL']:
+                if recipe.get(field):
+                    image_url = recipe.get(field)
+                    break
+            
+            # Check Airtable attachments (array of objects with URL property)
+            if not image_url and recipe.get('attachments'):
+                attachments = recipe.get('attachments')
+                if isinstance(attachments, list) and len(attachments) > 0:
+                    if isinstance(attachments[0], dict) and 'url' in attachments[0]:
+                        image_url = attachments[0]['url']
+                    elif isinstance(attachments[0], str):
+                        image_url = attachments[0]
             
             fallback_section = f"<h2>{recipe['title']}</h2>"
             

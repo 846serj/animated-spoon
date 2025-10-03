@@ -101,6 +101,7 @@ def fetch_all_recipes_from_airtable():
                 "image_url": fields.get("Image URL", ""),
                 "photo": fields.get("Photo", ""),
                 "picture": fields.get("Picture", ""),
+                "attachments": fields.get("Attachments", ""),
                 "description": fields.get("Description", ""),
             }
             recipes.append(recipe)
