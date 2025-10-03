@@ -81,6 +81,7 @@ def generate_recipe_sections(recipes_list, context):
         # Also add debug info to the first section for API response
         debug_info = f"<!-- DEBUG: Available fields: {list(recipes_list[0].keys())} -->"
         debug_info += f"<!-- Image fields: {[(k, v) for k, v in recipes_list[0].items() if 'image' in k.lower() or 'photo' in k.lower() or 'picture' in k.lower() or 'url' in k.lower()]} -->"
+        debug_info += f"<!-- Attachments: {recipes_list[0].get('attachments', 'None')} -->"
     
     for recipe in recipes_list:
         try:
@@ -101,8 +102,8 @@ def generate_recipe_sections(recipes_list, context):
             # Get image URL from any of the possible image fields
             image_url = None
             
-            # Check direct URL fields first
-            for field in ['image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL']:
+            # Check direct URL fields first (prioritize Image Link)
+            for field in ['image_link', 'image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL', 'Image Link']:
                 if recipe.get(field):
                     image_url = recipe.get(field)
                     break
@@ -149,8 +150,8 @@ def generate_recipe_sections(recipes_list, context):
             # Get image URL from any of the possible image fields
             image_url = None
             
-            # Check direct URL fields first
-            for field in ['image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL']:
+            # Check direct URL fields first (prioritize Image Link)
+            for field in ['image_link', 'image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL', 'Image Link']:
                 if recipe.get(field):
                     image_url = recipe.get(field)
                     break
