@@ -95,7 +95,9 @@ def generate_recipe_sections(recipes_list, context):
             )
             
             # Get image URL from any of the possible image fields
-            image_url = recipe.get('image_url') or recipe.get('image') or recipe.get('photo') or recipe.get('picture')
+            image_url = (recipe.get('image_url') or recipe.get('image') or recipe.get('photo') or 
+                        recipe.get('picture') or recipe.get('Image') or recipe.get('Photo') or 
+                        recipe.get('Picture') or recipe.get('Image URL') or recipe.get('Attachments'))
             
             section = f"<h2>{recipe['title']}</h2>"
             
@@ -124,7 +126,9 @@ def generate_recipe_sections(recipes_list, context):
         except Exception as e:
             print(f"Error generating section for {recipe['title']}: {e}")
             # Get image URL from any of the possible image fields
-            image_url = recipe.get('image_url') or recipe.get('image') or recipe.get('photo') or recipe.get('picture')
+            image_url = (recipe.get('image_url') or recipe.get('image') or recipe.get('photo') or 
+                        recipe.get('picture') or recipe.get('Image') or recipe.get('Photo') or 
+                        recipe.get('Picture') or recipe.get('Image URL') or recipe.get('Attachments'))
             
             fallback_section = f"<h2>{recipe['title']}</h2>"
             
