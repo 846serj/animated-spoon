@@ -19,4 +19,4 @@ if [ ! -f "data/recipes.index" ]; then
 fi
 
 # Start the server
-python api_server.py
+python production_server.py
