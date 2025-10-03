@@ -23,21 +23,13 @@ def generate_article(query, recipes_list):
     # Generate each section
     intro = generate_intro(query, context)
     recipe_sections = generate_recipe_sections(recipes_list, context)
-    cooking_tips = generate_cooking_tips(context)
     conclusion = generate_conclusion(query, context)
     
     # Combine into complete article
-    article = f"""<h1>{query.title()}</h1>
+    article = f"""{intro}
 
-{intro}
-
-<h2>Featured Recipes</h2>
 {recipe_sections}
 
-<h2>Cooking Tips for {context['cuisine'].title()} Cuisine</h2>
-{cooking_tips}
-
-<h2>Conclusion</h2>
 {conclusion}"""
     
     return article
@@ -83,14 +75,14 @@ def generate_recipe_sections(recipes_list, context):
                 temperature=0.7
             )
             
-            section = f"<h3>{recipe['title']}</h3>\n{response.choices[0].message.content}"
+            section = f"<h2>{recipe['title']}</h2>\n{response.choices[0].message.content}"
             if recipe.get('url'):
                 section += f'\n<p><a href="{recipe["url"]}">View Full Recipe</a></p>'
             sections.append(section)
             
         except Exception as e:
             print(f"Error generating section for {recipe['title']}: {e}")
-            sections.append(f"<h3>{recipe['title']}</h3><p>{recipe['description']}</p>")
+            sections.append(f"<h2>{recipe['title']}</h2><p>{recipe['description']}</p>")
     
     return "\n\n".join(sections)
 

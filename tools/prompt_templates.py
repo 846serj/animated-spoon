@@ -48,22 +48,20 @@ Create anticipation and set the scene for {cuisine} cuisine. Mention what makes 
 
 Write in an engaging, warm tone that makes readers excited to cook these dishes.
 
-Format the response as HTML paragraphs using <p> tags."""
+Format the response as HTML with <h2>Introduction</h2> followed by <p> tags for paragraphs."""
 
-RECIPE_SECTION_TEMPLATE = """Write an engaging 2 paragraph section about this {cuisine} recipe:
+RECIPE_SECTION_TEMPLATE = """Write exactly 2 paragraphs about this {cuisine} recipe:
 
 Title: {title}
 Description: {description}
 
-Include:
-- Why this recipe is special
-- Cooking tips or techniques
-- Cultural context or flavor notes
-- What makes it authentic {cuisine}
+First paragraph: Focus on what makes this recipe special, its cultural significance, and why it's worth making.
+
+Second paragraph: Include cooking tips, techniques, flavor notes, or what makes it authentic {cuisine}.
 
 Write in engaging food-blog style, keep it professional and new york times style, no buzzwords.
 
-Format the response as HTML paragraphs using <p> tags."""
+Format the response as exactly 2 HTML paragraphs using <p> tags."""
 
 COOKING_TIPS_TEMPLATE = """Write 1-2 paragraphs of general cooking tips for {cuisine} cuisine.
 
@@ -77,10 +75,10 @@ Write in a helpful, encouraging tone that builds confidence in home cooks.
 
 Format the response as HTML paragraphs using <p> tags."""
 
-CONCLUSION_TEMPLATE = """Write a compelling conclusion paragraph for an article about {query}.
+CONCLUSION_TEMPLATE = """Write a compelling conclusion for an article about {query}.
 
 Tie everything together and encourage readers to try these {cuisine} recipes. End on an inspiring note that makes them excited to start cooking.
 
 Keep it warm and encouraging.
 
-Format the response as HTML paragraphs using <p> tags."""
+Format the response as HTML with <h2>Conclusion</h2> followed by <p> tags for paragraphs."""
