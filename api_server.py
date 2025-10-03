@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Recipe server with automatic data generation on first run.
-This handles the case where data files don't exist on Render.
+Recipe server that starts immediately and generates data in background.
+This fixes the port binding issue.
 """
 
 import sys
@@ -12,6 +12,8 @@ import numpy as np
 import openai
 import re
 import requests
+import threading
+import time
 from flask import Flask, request, jsonify
 
 # Add current directory to path
@@ -23,6 +25,8 @@ app = Flask(__name__)
 recipes = None
 index = None
 id_to_recipe = None
+data_ready = False
+data_generation_progress = "Starting..."
 
 def fetch_airtable_records():
     """Fetch recipes from Airtable."""
@@ -99,86 +103,116 @@ def generate_embeddings_batch(recipes_batch):
     
     return recipes_batch
 
-def setup_data():
-    """Set up recipe data from Airtable with memory optimization."""
-    print("Setting up recipe data on Render...")
+def setup_data_background():
+    """Set up recipe data in background thread."""
+    global recipes, index, id_to_recipe, data_ready, data_generation_progress
     
-    # Create data directory
-    os.makedirs("data", exist_ok=True)
-    
-    # Fetch recipes
-    print("Fetching recipes from Airtable...")
-    recipes = fetch_airtable_records()
-    print(f"Fetched {len(recipes)} recipes")
-    
-    # Save raw recipes
-    print("Saving raw recipes...")
-    with open("data/recipes.json", "w") as f:
-        json.dump(recipes, f, indent=2)
-    
-    # Generate embeddings in small batches
-    print("Generating embeddings in small batches...")
-    batch_size = 10
-    recipes_with_embeddings = []
-    
-    for i in range(0, len(recipes), batch_size):
-        batch = recipes[i:i + batch_size]
-        print(f"Processing batch {i//batch_size + 1}/{(len(recipes) + batch_size - 1)//batch_size}")
+    try:
+        data_generation_progress = "Creating data directory..."
+        os.makedirs("data", exist_ok=True)
         
-        batch_embeddings = generate_embeddings_batch(batch)
-        recipes_with_embeddings.extend(batch_embeddings)
+        data_generation_progress = "Fetching recipes from Airtable..."
+        recipes = fetch_airtable_records()
+        data_generation_progress = f"Fetched {len(recipes)} recipes"
         
-        # Save progress every 100 recipes
-        if len(recipes_with_embeddings) % 100 == 0:
-            print(f"Saving progress: {len(recipes_with_embeddings)} recipes processed")
-            with open("data/recipes_with_embeddings.json", "w") as f:
-                json.dump(recipes_with_embeddings, f)
-    
-    # Save final embeddings
-    print("Saving final embeddings...")
-    with open("data/recipes_with_embeddings.json", "w") as f:
-        json.dump(recipes_with_embeddings, f)
-    
-    # Build FAISS index
-    print("Building FAISS index...")
-    embeddings_matrix = np.array([recipe["embedding"] for recipe in recipes_with_embeddings], dtype=np.float32)
-    index = faiss.IndexFlatIP(embeddings_matrix.shape[1])
-    index.add(embeddings_matrix)
-    faiss.write_index(index, "data/recipes.index")
-    
-    print("Data setup complete!")
-    return len(recipes_with_embeddings)
+        # Save raw recipes
+        data_generation_progress = "Saving raw recipes..."
+        with open("data/recipes.json", "w") as f:
+            json.dump(recipes, f, indent=2)
+        
+        # Generate embeddings in small batches
+        data_generation_progress = "Generating embeddings in small batches..."
+        batch_size = 10
+        recipes_with_embeddings = []
+        
+        for i in range(0, len(recipes), batch_size):
+            batch = recipes[i:i + batch_size]
+            batch_num = i//batch_size + 1
+            total_batches = (len(recipes) + batch_size - 1)//batch_size
+            data_generation_progress = f"Processing batch {batch_num}/{total_batches}"
+            
+            batch_embeddings = generate_embeddings_batch(batch)
+            recipes_with_embeddings.extend(batch_embeddings)
+            
+            # Save progress every 100 recipes
+            if len(recipes_with_embeddings) % 100 == 0:
+                data_generation_progress = f"Saving progress: {len(recipes_with_embeddings)} recipes processed"
+                with open("data/recipes_with_embeddings.json", "w") as f:
+                    json.dump(recipes_with_embeddings, f)
+        
+        # Save final embeddings
+        data_generation_progress = "Saving final embeddings..."
+        with open("data/recipes_with_embeddings.json", "w") as f:
+            json.dump(recipes_with_embeddings, f)
+        
+        # Build FAISS index
+        data_generation_progress = "Building FAISS index..."
+        embeddings_matrix = np.array([recipe["embedding"] for recipe in recipes_with_embeddings], dtype=np.float32)
+        index = faiss.IndexFlatIP(embeddings_matrix.shape[1])
+        index.add(embeddings_matrix)
+        faiss.write_index(index, "data/recipes.index")
+        
+        # Set global variables
+        recipes = recipes_with_embeddings
+        id_to_recipe = {recipe["id"]: recipe for recipe in recipes}
+        
+        data_generation_progress = f"Data setup complete! Loaded {len(recipes)} recipes"
+        data_ready = True
+        
+        print(f"Background data generation complete! Loaded {len(recipes)} recipes")
+        
+    except Exception as e:
+        data_generation_progress = f"Error: {str(e)}"
+        print(f"Background data generation failed: {e}")
 
 def load_data():
-    """Load pre-computed data files, or create them if they don't exist."""
-    global recipes, index, id_to_recipe
+    """Load pre-computed data files, or start background generation."""
+    global recipes, index, id_to_recipe, data_ready, data_generation_progress
     
     print("Loading pre-computed recipe data...")
     
     try:
         # Check if data files exist
-        if not os.path.exists("data/recipes_with_embeddings.json") or not os.path.exists("data/recipes.index"):
-            print("Data files not found. Setting up data...")
-            setup_data()
-        
-        # Load recipes with embeddings
-        with open("data/recipes_with_embeddings.json", "r") as f:
-            recipes = json.load(f)
-        
-        # Load FAISS index
-        index = faiss.read_index("data/recipes.index")
-        
-        # Create ID mapping
-        id_to_recipe = {recipe["id"]: recipe for recipe in recipes}
-        
-        print(f"Loaded {len(recipes)} recipes with embeddings")
-        return True
+        if os.path.exists("data/recipes_with_embeddings.json") and os.path.exists("data/recipes.index"):
+            print("Loading existing data files...")
+            
+            # Load recipes with embeddings
+            with open("data/recipes_with_embeddings.json", "r") as f:
+                recipes = json.load(f)
+            
+            # Load FAISS index
+            index = faiss.read_index("data/recipes.index")
+            
+            # Create ID mapping
+            id_to_recipe = {recipe["id"]: recipe for recipe in recipes}
+            
+            data_ready = True
+            data_generation_progress = f"Loaded {len(recipes)} recipes from cache"
+            print(f"Loaded {len(recipes)} recipes with embeddings")
+            return True
+        else:
+            print("Data files not found. Starting background generation...")
+            data_generation_progress = "Starting background data generation..."
+            
+            # Start background thread
+            thread = threading.Thread(target=setup_data_background)
+            thread.daemon = True
+            thread.start()
+            
+            return True
+            
     except Exception as e:
         print(f"Error loading data: {e}")
+        data_generation_progress = f"Error: {str(e)}"
         return False
 
 def search_recipes(query, k=5):
     """Search recipes using pre-computed embeddings."""
+    global recipes, index
+    
+    if not data_ready or recipes is None or index is None:
+        return []
+    
     try:
         # Generate embedding for query
         openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -250,6 +284,13 @@ Make it professional, engaging, and practical for home cooks."""
 def generate_recipe_article():
     """Generate recipe article from query."""
     try:
+        if not data_ready:
+            return jsonify({
+                'error': 'Data not ready yet',
+                'progress': data_generation_progress,
+                'status': 'generating'
+            }), 503
+        
         data = request.get_json()
         query = data.get('query', '')
         
@@ -289,8 +330,10 @@ def root():
     return jsonify({
         'message': 'Recipe Generation Server',
         'status': 'running',
+        'data_ready': data_ready,
+        'progress': data_generation_progress,
         'recipes_loaded': len(recipes) if recipes else 0,
-        'endpoints': ['/api/recipe-query', '/health']
+        'endpoints': ['/api/recipe-query', '/health', '/status']
     })
 
 @app.route('/health', methods=['GET'])
@@ -298,18 +341,27 @@ def health():
     """Health check endpoint."""
     return jsonify({
         'status': 'healthy',
+        'data_ready': data_ready,
+        'progress': data_generation_progress,
+        'recipes_loaded': len(recipes) if recipes else 0
+    })
+
+@app.route('/status', methods=['GET'])
+def status():
+    """Status endpoint for data generation progress."""
+    return jsonify({
+        'data_ready': data_ready,
+        'progress': data_generation_progress,
         'recipes_loaded': len(recipes) if recipes else 0
     })
 
 if __name__ == '__main__':
     print("Starting recipe server...")
     
-    # Load data
-    if not load_data():
-        print("Failed to load data. Exiting.")
-        sys.exit(1)
+    # Load data (starts background generation if needed)
+    load_data()
     
-    print("Server ready!")
+    print("Server ready! (Data generation may be running in background)")
     
     # Get port from environment variable
     port = int(os.environ.get('PORT', 3004))
