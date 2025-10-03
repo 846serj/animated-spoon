@@ -37,9 +37,8 @@ def fetch_recipes_from_airtable(query_text="", limit=50):
         "sort[0][direction]": "asc"
     }
     
-    # Add text filter if provided
-    if query_text:
-        params["filterByFormula"] = f"SEARCH(LOWER('{query_text}'), LOWER({{Title}} & ' ' & {{Ingredients}} & ' ' & {{Instructions}}))"
+    # Skip Airtable filtering for now - we'll do it in our code
+    # This avoids complex formula syntax issues
     
     all_records = []
     offset = None
