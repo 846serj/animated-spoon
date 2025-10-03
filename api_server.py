@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """
-Recipe server that starts immediately and generates data in background.
-This fixes the port binding issue.
+Direct Airtable recipe server - queries Airtable directly, no pre-computed data needed.
+Much faster and more efficient approach.
 """
 
 import sys
 import os
 import json
-import faiss
 import numpy as np
 import openai
 import re
 import requests
-import threading
-import time
 from flask import Flask, request, jsonify
 
 # Add current directory to path
@@ -21,15 +18,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__)
 
-# Global variables for pre-computed data
-recipes = None
-index = None
-id_to_recipe = None
-data_ready = False
-data_generation_progress = "Starting..."
-
-def fetch_airtable_records():
-    """Fetch recipes from Airtable."""
+def fetch_recipes_from_airtable(query_text="", limit=50):
+    """Fetch recipes from Airtable with optional text filtering."""
     api_key = os.getenv("AIRTABLE_API_KEY")
     base_id = os.getenv("AIRTABLE_BASE_ID", "appa4SaUbDRFYM42O")
     table_name = os.getenv("AIRTABLE_TABLE_NAME", "Molly's View")
@@ -40,11 +30,21 @@ def fetch_airtable_records():
     url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
     headers = {"Authorization": f"Bearer {api_key}"}
     
+    # Build query parameters
+    params = {
+        "pageSize": min(limit, 100),  # Airtable max is 100
+        "sort[0][field]": "Title",
+        "sort[0][direction]": "asc"
+    }
+    
+    # Add text filter if provided
+    if query_text:
+        params["filterByFormula"] = f"SEARCH(LOWER('{query_text}'), LOWER({{Title}} & ' ' & {{Ingredients}} & ' ' & {{Instructions}}))"
+    
     all_records = []
     offset = None
     
-    while True:
-        params = {"pageSize": 100}
+    while len(all_records) < limit:
         if offset:
             params["offset"] = offset
             
@@ -54,14 +54,14 @@ def fetch_airtable_records():
         data = response.json()
         all_records.extend(data["records"])
         
-        if "offset" in data:
+        if "offset" in data and len(all_records) < limit:
             offset = data["offset"]
         else:
             break
     
     # Convert Airtable records to recipe format
     recipes = []
-    for record in all_records:
+    for record in all_records[:limit]:
         fields = record.get("fields", {})
         recipe = {
             "id": record["id"],
@@ -81,163 +81,67 @@ def fetch_airtable_records():
     
     return recipes
 
-def generate_embeddings_batch(recipes_batch):
-    """Generate embeddings for a batch of recipes."""
+def generate_embedding(text):
+    """Generate embedding for a single text."""
     openai.api_key = os.getenv("OPENAI_API_KEY")
     
-    # Create text for embedding
-    texts = []
-    for recipe in recipes_batch:
-        text = f"{recipe['title']} {recipe['ingredients']} {recipe['instructions']}"
-        texts.append(text)
-    
-    # Generate embeddings
     response = openai.embeddings.create(
         model="text-embedding-3-small",
-        input=texts
+        input=text
     )
     
-    # Add embeddings to recipes
-    for i, recipe in enumerate(recipes_batch):
-        recipe["embedding"] = response.data[i].embedding
-    
-    return recipes_batch
+    return response.data[0].embedding
 
-def setup_data_background():
-    """Set up recipe data in background thread."""
-    global recipes, index, id_to_recipe, data_ready, data_generation_progress
-    
-    try:
-        data_generation_progress = "Creating data directory..."
-        os.makedirs("data", exist_ok=True)
-        
-        data_generation_progress = "Fetching recipes from Airtable..."
-        recipes = fetch_airtable_records()
-        data_generation_progress = f"Fetched {len(recipes)} recipes"
-        
-        # Save raw recipes
-        data_generation_progress = "Saving raw recipes..."
-        with open("data/recipes.json", "w") as f:
-            json.dump(recipes, f, indent=2)
-        
-        # Generate embeddings in small batches
-        data_generation_progress = "Generating embeddings in small batches..."
-        batch_size = 10
-        recipes_with_embeddings = []
-        
-        for i in range(0, len(recipes), batch_size):
-            batch = recipes[i:i + batch_size]
-            batch_num = i//batch_size + 1
-            total_batches = (len(recipes) + batch_size - 1)//batch_size
-            data_generation_progress = f"Processing batch {batch_num}/{total_batches}"
-            
-            batch_embeddings = generate_embeddings_batch(batch)
-            recipes_with_embeddings.extend(batch_embeddings)
-            
-            # Save progress every 100 recipes
-            if len(recipes_with_embeddings) % 100 == 0:
-                data_generation_progress = f"Saving progress: {len(recipes_with_embeddings)} recipes processed"
-                with open("data/recipes_with_embeddings.json", "w") as f:
-                    json.dump(recipes_with_embeddings, f)
-        
-        # Save final embeddings
-        data_generation_progress = "Saving final embeddings..."
-        with open("data/recipes_with_embeddings.json", "w") as f:
-            json.dump(recipes_with_embeddings, f)
-        
-        # Build FAISS index
-        data_generation_progress = "Building FAISS index..."
-        embeddings_matrix = np.array([recipe["embedding"] for recipe in recipes_with_embeddings], dtype=np.float32)
-        index = faiss.IndexFlatIP(embeddings_matrix.shape[1])
-        index.add(embeddings_matrix)
-        faiss.write_index(index, "data/recipes.index")
-        
-        # Set global variables
-        recipes = recipes_with_embeddings
-        id_to_recipe = {recipe["id"]: recipe for recipe in recipes}
-        
-        data_generation_progress = f"Data setup complete! Loaded {len(recipes)} recipes"
-        data_ready = True
-        
-        print(f"Background data generation complete! Loaded {len(recipes)} recipes")
-        
-    except Exception as e:
-        data_generation_progress = f"Error: {str(e)}"
-        print(f"Background data generation failed: {e}")
-
-def load_data():
-    """Load pre-computed data files, or start background generation."""
-    global recipes, index, id_to_recipe, data_ready, data_generation_progress
-    
-    print("Loading pre-computed recipe data...")
-    
-    try:
-        # Check if data files exist
-        if os.path.exists("data/recipes_with_embeddings.json") and os.path.exists("data/recipes.index"):
-            print("Loading existing data files...")
-            
-            # Load recipes with embeddings
-            with open("data/recipes_with_embeddings.json", "r") as f:
-                recipes = json.load(f)
-            
-            # Load FAISS index
-            index = faiss.read_index("data/recipes.index")
-            
-            # Create ID mapping
-            id_to_recipe = {recipe["id"]: recipe for recipe in recipes}
-            
-            data_ready = True
-            data_generation_progress = f"Loaded {len(recipes)} recipes from cache"
-            print(f"Loaded {len(recipes)} recipes with embeddings")
-            return True
-        else:
-            print("Data files not found. Starting background generation...")
-            data_generation_progress = "Starting background data generation..."
-            
-            # Start background thread
-            thread = threading.Thread(target=setup_data_background)
-            thread.daemon = True
-            thread.start()
-            
-            return True
-            
-    except Exception as e:
-        print(f"Error loading data: {e}")
-        data_generation_progress = f"Error: {str(e)}"
-        return False
-
-def search_recipes(query, k=5):
-    """Search recipes using pre-computed embeddings."""
-    global recipes, index
-    
-    if not data_ready or recipes is None or index is None:
-        return []
-    
+def search_recipes_semantic(query, recipes, k=5):
+    """Search recipes using semantic similarity."""
     try:
         # Generate embedding for query
-        openai.api_key = os.getenv("OPENAI_API_KEY")
+        query_embedding = generate_embedding(query)
         
-        response = openai.embeddings.create(
-            model="text-embedding-3-small",
-            input=query
-        )
-        query_embedding = np.array([response.data[0].embedding], dtype=np.float32)
+        # Generate embeddings for recipes and calculate similarities
+        recipe_scores = []
+        for recipe in recipes:
+            # Create text for embedding
+            recipe_text = f"{recipe['title']} {recipe['ingredients']} {recipe['instructions']}"
+            recipe_embedding = generate_embedding(recipe_text)
+            
+            # Calculate cosine similarity
+            similarity = np.dot(query_embedding, recipe_embedding) / (
+                np.linalg.norm(query_embedding) * np.linalg.norm(recipe_embedding)
+            )
+            
+            recipe_scores.append((recipe, similarity))
         
-        # Search FAISS index
-        scores, indices = index.search(query_embedding, k)
-        
-        # Get top recipes
-        top_recipes = []
-        for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
-            if idx < len(recipes):
-                recipe = recipes[idx].copy()
-                recipe['similarity_score'] = float(score)
-                top_recipes.append(recipe)
+        # Sort by similarity and return top k
+        recipe_scores.sort(key=lambda x: x[1], reverse=True)
+        top_recipes = [recipe for recipe, score in recipe_scores[:k]]
         
         return top_recipes
     except Exception as e:
-        print(f"Error searching recipes: {e}")
-        return []
+        print(f"Error in semantic search: {e}")
+        # Fallback to simple text search
+        return search_recipes_text(query, recipes, k)
+
+def search_recipes_text(query, recipes, k=5):
+    """Fallback text search."""
+    query_lower = query.lower()
+    scored_recipes = []
+    
+    for recipe in recipes:
+        score = 0
+        text = f"{recipe['title']} {recipe['ingredients']} {recipe['instructions']}".lower()
+        
+        # Simple scoring based on keyword matches
+        for word in query_lower.split():
+            if word in text:
+                score += text.count(word)
+        
+        if score > 0:
+            scored_recipes.append((recipe, score))
+    
+    # Sort by score and return top k
+    scored_recipes.sort(key=lambda x: x[1], reverse=True)
+    return [recipe for recipe, score in scored_recipes[:k]]
 
 def generate_article(query, recipes):
     """Generate article from recipes."""
@@ -284,13 +188,6 @@ Make it professional, engaging, and practical for home cooks."""
 def generate_recipe_article():
     """Generate recipe article from query."""
     try:
-        if not data_ready:
-            return jsonify({
-                'error': 'Data not ready yet',
-                'progress': data_generation_progress,
-                'status': 'generating'
-            }), 503
-        
         data = request.get_json()
         query = data.get('query', '')
         
@@ -301,17 +198,32 @@ def generate_recipe_article():
         numbers = re.findall(r'\d+', query)
         k = int(numbers[0]) if numbers else 5
         
-        # Search recipes
-        top_recipes = search_recipes(query, k=k)
+        print(f"Processing query: {query}")
         
-        if not top_recipes:
+        # Fetch recipes from Airtable (with text filtering)
+        print("Fetching recipes from Airtable...")
+        recipes = fetch_recipes_from_airtable(query_text=query, limit=100)
+        print(f"Fetched {len(recipes)} recipes")
+        
+        if not recipes:
             return jsonify({'error': 'No recipes found'}), 404
         
+        # Search for most relevant recipes
+        print("Searching for most relevant recipes...")
+        top_recipes = search_recipes_semantic(query, recipes, k=k)
+        print(f"Found {len(top_recipes)} relevant recipes")
+        
+        if not top_recipes:
+            return jsonify({'error': 'No relevant recipes found'}), 404
+        
         # Generate article
+        print("Generating article...")
         article = generate_article(query, top_recipes)
         
         # Extract sources
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
+        
+        print("Article generated successfully!")
         
         return jsonify({
             'article': article,
@@ -328,12 +240,10 @@ def generate_recipe_article():
 def root():
     """Root endpoint."""
     return jsonify({
-        'message': 'Recipe Generation Server',
+        'message': 'Direct Airtable Recipe Server',
         'status': 'running',
-        'data_ready': data_ready,
-        'progress': data_generation_progress,
-        'recipes_loaded': len(recipes) if recipes else 0,
-        'endpoints': ['/api/recipe-query', '/health', '/status']
+        'description': 'Queries Airtable directly - no pre-computed data needed',
+        'endpoints': ['/api/recipe-query', '/health']
     })
 
 @app.route('/health', methods=['GET'])
@@ -341,27 +251,12 @@ def health():
     """Health check endpoint."""
     return jsonify({
         'status': 'healthy',
-        'data_ready': data_ready,
-        'progress': data_generation_progress,
-        'recipes_loaded': len(recipes) if recipes else 0
-    })
-
-@app.route('/status', methods=['GET'])
-def status():
-    """Status endpoint for data generation progress."""
-    return jsonify({
-        'data_ready': data_ready,
-        'progress': data_generation_progress,
-        'recipes_loaded': len(recipes) if recipes else 0
+        'description': 'Direct Airtable access - always ready'
     })
 
 if __name__ == '__main__':
-    print("Starting recipe server...")
-    
-    # Load data (starts background generation if needed)
-    load_data()
-    
-    print("Server ready! (Data generation may be running in background)")
+    print("Starting direct Airtable recipe server...")
+    print("No data generation needed - queries Airtable directly!")
     
     # Get port from environment variable
     port = int(os.environ.get('PORT', 3004))
