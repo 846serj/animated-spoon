@@ -92,6 +92,10 @@ def fetch_all_recipes_from_airtable():
                 "cook_time": fields.get("Cook Time", ""),
                 "servings": fields.get("Servings", ""),
                 "tags": fields.get("Tags", ""),
+                "image": fields.get("Image", ""),
+                "image_url": fields.get("Image URL", ""),
+                "photo": fields.get("Photo", ""),
+                "picture": fields.get("Picture", ""),
             }
             recipes.append(recipe)
         

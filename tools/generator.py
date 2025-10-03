@@ -75,14 +75,35 @@ def generate_recipe_sections(recipes_list, context):
                 temperature=0.7
             )
             
-            section = f"<h2>{recipe['title']}</h2>\n{response.choices[0].message.content}"
+            # Get image URL from any of the possible image fields
+            image_url = recipe.get('image_url') or recipe.get('image') or recipe.get('photo') or recipe.get('picture')
+            
+            section = f"<h2>{recipe['title']}</h2>"
+            
+            # Add image if available
+            if image_url and image_url.strip():
+                section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">'
+            
+            section += f"\n{response.choices[0].message.content}"
+            
             if recipe.get('url'):
                 section += f'\n<p><a href="{recipe["url"]}">View Full Recipe</a></p>'
             sections.append(section)
             
         except Exception as e:
             print(f"Error generating section for {recipe['title']}: {e}")
-            sections.append(f"<h2>{recipe['title']}</h2><p>{recipe['description']}</p>")
+            # Get image URL from any of the possible image fields
+            image_url = recipe.get('image_url') or recipe.get('image') or recipe.get('photo') or recipe.get('picture')
+            
+            fallback_section = f"<h2>{recipe['title']}</h2>"
+            
+            # Add image if available
+            if image_url and image_url.strip():
+                fallback_section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">'
+            
+            fallback_section += f"<p>{recipe.get('description', recipe.get('ingredients', ''))}</p>"
+            
+            sections.append(fallback_section)
     
     return "\n\n".join(sections)
 
