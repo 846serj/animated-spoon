@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Simple Flask API server to serve recipe generation requests.
+Simplified Flask server for Render deployment with minimal memory usage.
 """
 
 from flask import Flask, request, jsonify
 import sys
 import os
+import json
 
 # Add current directory to path to import tools
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -40,7 +41,7 @@ def load_data():
     print(f"Loaded {len(recipes)} recipes")
 
 def setup_data():
-    """Set up recipe data from Airtable with memory optimization."""
+    """Set up recipe data from Airtable with minimal memory usage."""
     import os
     import gc
     
@@ -50,15 +51,19 @@ def setup_data():
     print("2. Fetching recipes from Airtable...")
     recipes = airtable_sync.fetch_airtable_records()
     
+    # For Render's memory limits, let's use only the first 1000 recipes
+    if len(recipes) > 1000:
+        print(f"Limiting to first 1000 recipes for memory efficiency (total: {len(recipes)})")
+        recipes = recipes[:1000]
+    
     # Save raw recipes first
     print("3. Saving raw recipes...")
-    import json
     with open("data/recipes.json", "w") as f:
         json.dump(recipes, f, indent=2)
     
-    print("4. Generating embeddings in very small batches...")
+    print("4. Generating embeddings in tiny batches...")
     # Process in very small batches to reduce memory usage
-    batch_size = 10  # Much smaller batch size for Render's 512MB limit
+    batch_size = 5  # Very small batch size
     recipes_with_embeddings = []
     
     for i in range(0, len(recipes), batch_size):
@@ -72,12 +77,12 @@ def setup_data():
         del batch_embeddings
         gc.collect()
         
-        # Save progress every 100 recipes to avoid losing work
-        if len(recipes_with_embeddings) % 100 == 0:
+        # Save progress every 50 recipes
+        if len(recipes_with_embeddings) % 50 == 0:
             print(f"Saving progress: {len(recipes_with_embeddings)} recipes processed")
             embeddings.save_embeddings(recipes_with_embeddings)
     
-    print("5. Saving embeddings...")
+    print("5. Saving final embeddings...")
     embeddings.save_embeddings(recipes_with_embeddings)
     
     # Clear memory before building index
@@ -137,7 +142,7 @@ def generate_recipe_article():
 def root():
     """Root endpoint."""
     return jsonify({
-        'message': 'Recipe Generation Server',
+        'message': 'Recipe Generation Server (Simplified)',
         'status': 'running',
         'recipes_loaded': len(recipes) if recipes else 0,
         'endpoints': ['/api/recipe-query', '/health']
@@ -149,7 +154,7 @@ def health_check():
     return jsonify({'status': 'healthy', 'recipes_loaded': len(recipes) if recipes else 0})
 
 if __name__ == '__main__':
-    print("Starting recipe generation server...")
+    print("Starting simplified recipe generation server...")
     load_data()
     print("Server ready!")
     

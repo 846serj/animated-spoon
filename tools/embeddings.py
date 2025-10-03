@@ -14,8 +14,8 @@ def generate_embeddings(recipes):
     """Generate embeddings for a list of recipes."""
     print(f"Generating embeddings for {len(recipes)} recipes...")
     
-    # Use smaller batch size for memory efficiency
-    batch_size = min(BATCH_SIZE, 25)  # Cap at 25 for memory efficiency
+    # Use very small batch size for memory efficiency on Render
+    batch_size = min(BATCH_SIZE, 5)  # Cap at 5 for Render's 512MB limit
     
     # Prepare text for embedding
     texts = []
