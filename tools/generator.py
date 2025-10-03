@@ -73,7 +73,10 @@ def generate_recipe_sections(recipes_list, context):
     # Debug: Print available fields for first recipe
     if recipes_list:
         print(f"DEBUG: First recipe fields: {list(recipes_list[0].keys())}")
-        print(f"DEBUG: Image fields - image_url: {recipes_list[0].get('image_url')}, image: {recipes_list[0].get('image')}, photo: {recipes_list[0].get('photo')}, picture: {recipes_list[0].get('picture')}")
+        print(f"DEBUG: All field values for first recipe:")
+        for key, value in recipes_list[0].items():
+            if 'image' in key.lower() or 'photo' in key.lower() or 'picture' in key.lower() or 'url' in key.lower():
+                print(f"  {key}: {value}")
     
     for recipe in recipes_list:
         try:
