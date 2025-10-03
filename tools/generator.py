@@ -70,6 +70,11 @@ def generate_recipe_sections(recipes_list, context):
     """Generate individual recipe sections."""
     sections = []
     
+    # Debug: Print available fields for first recipe
+    if recipes_list:
+        print(f"DEBUG: First recipe fields: {list(recipes_list[0].keys())}")
+        print(f"DEBUG: Image fields - image_url: {recipes_list[0].get('image_url')}, image: {recipes_list[0].get('image')}, photo: {recipes_list[0].get('photo')}, picture: {recipes_list[0].get('picture')}")
+    
     for recipe in recipes_list:
         try:
             response = openai.chat.completions.create(
