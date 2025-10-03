@@ -188,42 +188,76 @@ Make it professional, engaging, and practical for home cooks."""
 def generate_recipe_article():
     """Generate recipe article from query."""
     try:
+        print("=== Recipe Query Started ===")
+        
         data = request.get_json()
         query = data.get('query', '')
         
+        print(f"Received query: {query}")
+        
         if not query:
+            print("Error: No query provided")
             return jsonify({'error': 'Query is required'}), 400
         
         # Extract number from query
         numbers = re.findall(r'\d+', query)
         k = int(numbers[0]) if numbers else 5
+        print(f"Extracted k={k} from query")
         
-        print(f"Processing query: {query}")
+        # Check environment variables
+        api_key = os.getenv("AIRTABLE_API_KEY")
+        if not api_key:
+            print("Error: AIRTABLE_API_KEY not set")
+            return jsonify({'error': 'AIRTABLE_API_KEY environment variable not set'}), 500
+        
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if not openai_key:
+            print("Error: OPENAI_API_KEY not set")
+            return jsonify({'error': 'OPENAI_API_KEY environment variable not set'}), 500
+        
+        print("Environment variables OK")
         
         # Fetch recipes from Airtable (with text filtering)
         print("Fetching recipes from Airtable...")
-        recipes = fetch_recipes_from_airtable(query_text=query, limit=100)
-        print(f"Fetched {len(recipes)} recipes")
+        try:
+            recipes = fetch_recipes_from_airtable(query_text=query, limit=100)
+            print(f"Fetched {len(recipes)} recipes")
+        except Exception as e:
+            print(f"Error fetching from Airtable: {e}")
+            return jsonify({'error': f'Airtable error: {str(e)}'}), 500
         
         if not recipes:
+            print("No recipes found")
             return jsonify({'error': 'No recipes found'}), 404
         
         # Search for most relevant recipes
         print("Searching for most relevant recipes...")
-        top_recipes = search_recipes_semantic(query, recipes, k=k)
-        print(f"Found {len(top_recipes)} relevant recipes")
+        try:
+            top_recipes = search_recipes_semantic(query, recipes, k=k)
+            print(f"Found {len(top_recipes)} relevant recipes")
+        except Exception as e:
+            print(f"Error in semantic search: {e}")
+            # Fallback to simple text search
+            top_recipes = search_recipes_text(query, recipes, k=k)
+            print(f"Fallback found {len(top_recipes)} recipes")
         
         if not top_recipes:
+            print("No relevant recipes found")
             return jsonify({'error': 'No relevant recipes found'}), 404
         
         # Generate article
         print("Generating article...")
-        article = generate_article(query, top_recipes)
+        try:
+            article = generate_article(query, top_recipes)
+            print("Article generated successfully!")
+        except Exception as e:
+            print(f"Error generating article: {e}")
+            return jsonify({'error': f'Article generation error: {str(e)}'}), 500
         
         # Extract sources
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
         
-        print("Article generated successfully!")
+        print("=== Recipe Query Completed Successfully ===")
         
         return jsonify({
             'article': article,
@@ -233,8 +267,12 @@ def generate_recipe_article():
         })
         
     except Exception as e:
-        print(f"Error generating recipe article: {e}")
-        return jsonify({'error': str(e)}), 500
+        print(f"=== Unexpected Error ===")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error message: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
 
 @app.route('/', methods=['GET'])
 def root():
