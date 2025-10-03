@@ -79,7 +79,7 @@ def generate_recipe_sections(recipes_list, context):
                     {"role": "user", "content": RECIPE_SECTION_TEMPLATE.format(
                         cuisine=context['cuisine'],
                         title=recipe['title'],
-                        description=recipe['description']
+                        description=f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}"
                     )}
                 ],
                 max_tokens=400,
@@ -124,7 +124,7 @@ def generate_recipe_sections(recipes_list, context):
             if image_url and image_url.strip():
                 fallback_section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">'
             
-            fallback_section += f"<p>{recipe.get('description', recipe.get('ingredients', ''))}</p>"
+            fallback_section += f"<p>{recipe.get('ingredients', '')} {recipe.get('instructions', '')}</p>"
             
             sections.append(fallback_section)
     
