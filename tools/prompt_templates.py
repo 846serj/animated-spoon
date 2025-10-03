@@ -48,7 +48,7 @@ Create anticipation and set the scene for {cuisine} cuisine. Mention what makes 
 
 Write in an engaging, warm tone that makes readers excited to cook these dishes.
 
-IMPORTANT: Format the response as HTML with <h2>Introduction</h2> followed by a single <p> tag. The paragraph must be wrapped in <p> and </p> tags."""
+IMPORTANT: Format the response as a single <p> tag. The paragraph must be wrapped in <p> and </p> tags. Do NOT include any h2 heading."""
 
 RECIPE_SECTION_TEMPLATE = """Write exactly 2 paragraphs about this {cuisine} recipe:
 

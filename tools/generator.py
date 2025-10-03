@@ -64,7 +64,7 @@ def generate_intro(query, context):
         return content
     except Exception as e:
         print(f"Error generating intro: {e}")
-        return f"<h2>Introduction</h2><p>Welcome to our collection of {context['cuisine']} recipes!</p>"
+        return f"<p>Welcome to our collection of {context['cuisine']} recipes!</p>"
 
 def generate_recipe_sections(recipes_list, context):
     """Generate individual recipe sections."""
