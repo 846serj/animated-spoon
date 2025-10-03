@@ -1,10 +1,11 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS"
+    "builder": "NIXPACKS",
+    "buildCommand": "echo 'Building animated-spoon project'"
   },
   "deploy": {
-    "startCommand": "python api_server.py",
+    "startCommand": "./start.sh",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 30000,
     "restartPolicyType": "ON_FAILURE",
