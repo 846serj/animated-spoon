@@ -128,6 +128,16 @@ def generate_recipe_article():
         print(f"Error generating recipe article: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint."""
+    return jsonify({
+        'message': 'Recipe Generation Server',
+        'status': 'running',
+        'recipes_loaded': len(recipes) if recipes else 0,
+        'endpoints': ['/api/recipe-query', '/health']
+    })
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
@@ -137,4 +147,9 @@ if __name__ == '__main__':
     print("Starting recipe generation server...")
     load_data()
     print("Server ready!")
-    app.run(host='0.0.0.0', port=3004, debug=True)
+    
+    # Get port from environment variable (Render sets this)
+    port = int(os.environ.get('PORT', 3004))
+    print(f"Starting server on port {port}")
+    
+    app.run(host='0.0.0.0', port=port, debug=False)
