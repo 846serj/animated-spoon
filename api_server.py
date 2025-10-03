@@ -20,8 +20,15 @@ index = None
 id_to_recipe = None
 
 def load_data():
-    """Load recipes and FAISS index."""
+    """Load recipes and FAISS index, or create them if they don't exist."""
     global recipes, index, id_to_recipe
+    
+    import os
+    
+    # Check if data files exist
+    if not os.path.exists("data/recipes_with_embeddings.json") or not os.path.exists("data/recipes.index"):
+        print("Data files not found. Setting up recipe data...")
+        setup_data()
     
     print("Loading recipes with embeddings...")
     recipes = embeddings.load_embeddings()
@@ -31,6 +38,27 @@ def load_data():
     id_to_recipe = vector_store.get_id_to_recipe(recipes)
     
     print(f"Loaded {len(recipes)} recipes")
+
+def setup_data():
+    """Set up recipe data from Airtable."""
+    import os
+    
+    print("1. Creating data directory...")
+    os.makedirs("data", exist_ok=True)
+    
+    print("2. Fetching recipes from Airtable...")
+    recipes = airtable_sync.fetch_airtable_records()
+    
+    print("3. Generating embeddings...")
+    recipes_with_embeddings = embeddings.generate_embeddings(recipes)
+    
+    print("4. Saving embeddings...")
+    embeddings.save_embeddings(recipes_with_embeddings)
+    
+    print("5. Building FAISS index...")
+    vector_store.build_faiss_index(recipes_with_embeddings)
+    
+    print("Data setup complete!")
 
 @app.route('/api/recipe-query', methods=['POST'])
 def generate_recipe_article():
