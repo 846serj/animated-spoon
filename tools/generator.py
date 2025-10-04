@@ -127,17 +127,12 @@ def generate_recipe_sections(recipes_list, context):
             if image_url and image_url.strip():
                 section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">'
             
-            # Ensure content is properly formatted as HTML paragraphs
+            # Ensure content is properly formatted as HTML paragraph
             content = response.choices[0].message.content.strip()
             
-            # If content doesn't have <p> tags, wrap it
+            # If content doesn't have <p> tags, wrap it as a single paragraph
             if not content.startswith('<p>'):
-                # Split into paragraphs and wrap each in <p> tags
-                paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
-                if paragraphs:
-                    content = '\n\n'.join([f'<p>{p}</p>' for p in paragraphs])
-                else:
-                    content = f'<p>{content}</p>'
+                content = f'<p>{content}</p>'
             
             section += f"\n{content}"
             
@@ -171,7 +166,17 @@ def generate_recipe_sections(recipes_list, context):
             if image_url and image_url.strip():
                 fallback_section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">'
             
-            fallback_section += f"<p>{recipe.get('ingredients', '')} {recipe.get('instructions', '')}</p>"
+            # Create a concise fallback description (50-100 words)
+            ingredients = recipe.get('ingredients', '')
+            instructions = recipe.get('instructions', '')
+            fallback_text = f"{ingredients} {instructions}".strip()
+            
+            # Truncate to approximately 50-100 words if too long
+            words = fallback_text.split()
+            if len(words) > 100:
+                fallback_text = ' '.join(words[:100]) + '...'
+            
+            fallback_section += f"<p>{fallback_text}</p>"
             
             sections.append(fallback_section)
     

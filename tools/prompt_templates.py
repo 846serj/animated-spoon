@@ -50,18 +50,16 @@ Write in an engaging, warm tone that makes readers excited to cook these dishes.
 
 IMPORTANT: Format the response as a single <p> tag. The paragraph must be wrapped in <p> and </p> tags. Do NOT include any h2 heading."""
 
-RECIPE_SECTION_TEMPLATE = """Write exactly 2 paragraphs about this {cuisine} recipe:
+RECIPE_SECTION_TEMPLATE = """Write 50-100 words about this {cuisine} recipe:
 
 Title: {title}
 Description: {description}
 
-First paragraph: Focus on what makes this recipe special, its cultural significance, and why it's worth making.
-
-Second paragraph: Include cooking tips, techniques, flavor notes, or what makes it authentic {cuisine}.
+Focus on what makes this recipe special, its cultural significance, and why it's worth making. Include cooking tips, techniques, flavor notes, or what makes it authentic {cuisine}.
 
 Write in engaging food-blog style, keep it professional and new york times style, no buzzwords.
 
-Format the response as exactly 2 HTML paragraphs using <p> tags."""
+Format the response as a single HTML paragraph using <p> tags."""
 
 COOKING_TIPS_TEMPLATE = """Write 1-2 paragraphs of general cooking tips for {cuisine} cuisine.
 
