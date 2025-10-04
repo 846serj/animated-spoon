@@ -15,11 +15,13 @@ import threading
 import time
 import faiss
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__)
+CORS(app, origins=["https://test-for-write.onrender.com", "http://localhost:3000", "http://localhost:3003"])
 
 # Global variables for cached data
 recipes_cache = None
