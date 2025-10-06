@@ -125,7 +125,22 @@ def generate_recipe_sections(recipes_list, context):
             
             # Add image if available
             if image_url and image_url.strip():
-                section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">'
+                # Extract domain from image URL for credit
+                try:
+                    from urllib.parse import urlparse
+                    parsed_url = urlparse(image_url)
+                    domain = parsed_url.netloc
+                    if domain:
+                        caption = f"Image credit: {domain}"
+                    else:
+                        caption = "Image credit: Source"
+                except:
+                    caption = "Image credit: Source"
+                
+                section += f'\n<figure style="margin: 10px 0; text-align: center;">'
+                section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; border-radius: 8px;">'
+                section += f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
+                section += f'\n</figure>'
             
             # Ensure content is properly formatted as HTML paragraph
             content = response.choices[0].message.content.strip()
@@ -164,7 +179,22 @@ def generate_recipe_sections(recipes_list, context):
             
             # Add image if available
             if image_url and image_url.strip():
-                fallback_section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">'
+                # Extract domain from image URL for credit
+                try:
+                    from urllib.parse import urlparse
+                    parsed_url = urlparse(image_url)
+                    domain = parsed_url.netloc
+                    if domain:
+                        caption = f"Image credit: {domain}"
+                    else:
+                        caption = "Image credit: Source"
+                except:
+                    caption = "Image credit: Source"
+                
+                fallback_section += f'\n<figure style="margin: 10px 0; text-align: center;">'
+                fallback_section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; border-radius: 8px;">'
+                fallback_section += f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
+                fallback_section += f'\n</figure>'
             
             # Create a concise fallback description (50-100 words)
             ingredients = recipe.get('ingredients', '')
