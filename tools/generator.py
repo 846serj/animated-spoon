@@ -12,11 +12,46 @@ from .prompt_templates import (
     CONCLUSION_TEMPLATE
 )
 
+def _deduplicate_recipes(recipes_list):
+    """Remove duplicate recipe entries while preserving order."""
+    unique_recipes = []
+    seen_identifiers = set()
+
+    for recipe in recipes_list:
+        identifier = recipe.get("id") or recipe.get("record_id")
+
+        if not identifier:
+            title = (recipe.get("title") or "").strip().lower()
+            url = (recipe.get("url") or "").strip().lower()
+            if title or url:
+                identifier = (title, url)
+            else:
+                identifier = id(recipe)
+
+        if identifier in seen_identifiers:
+            continue
+
+        seen_identifiers.add(identifier)
+        unique_recipes.append(recipe)
+
+    return unique_recipes
+
+
+
 def generate_article(query, recipes_list):
     """Generate a complete multi-section article."""
     if not recipes_list:
         return "No recipes found."
-    
+
+    # Prevent duplicate recipes from appearing in the same article
+    unique_recipes = _deduplicate_recipes(recipes_list)
+    if len(unique_recipes) < len(recipes_list):
+        print(
+            f"Removed {len(recipes_list) - len(unique_recipes)} duplicate "
+            "recipe(s) before article generation."
+        )
+    recipes_list = unique_recipes
+
     # Extract context
     context = extract_context(query)
     
