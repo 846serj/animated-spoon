@@ -132,7 +132,11 @@ def generate_recipe_sections(recipes_list, context):
                     caption = "Image credit: Source"
                 
                 section += f'\n<figure style="margin: 10px 0; text-align: center;">'
-                section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; border-radius: 8px;">'
+                section += (
+                    f'\n<img src="{image_url}" alt="{recipe["title"]}" '
+                    f'width="1280" height="720" '
+                    f'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;">'
+                )
                 section += f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
                 section += f'\n</figure>'
             
@@ -186,7 +190,11 @@ def generate_recipe_sections(recipes_list, context):
                     caption = "Image credit: Source"
                 
                 fallback_section += f'\n<figure style="margin: 10px 0; text-align: center;">'
-                fallback_section += f'\n<img src="{image_url}" alt="{recipe["title"]}" style="max-width: 100%; height: auto; border-radius: 8px;">'
+                fallback_section += (
+                    f'\n<img src="{image_url}" alt="{recipe["title"]}" '
+                    f'width="1280" height="720" '
+                    f'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;">'
+                )
                 fallback_section += f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
                 fallback_section += f'\n</figure>'
             
