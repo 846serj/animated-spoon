@@ -42,22 +42,18 @@ def extract_context(query):
     }
 
 # Prompt Templates
-INTRO_TEMPLATE = """Write a compelling single paragraph introduction for an article titled "{query}".
+INTRO_TEMPLATE = """Write a concise, search-friendly introduction for an article titled "{query}".
 
-Create anticipation and set the scene for {cuisine} cuisine. Mention what makes {cuisine} food special and what readers will discover in this collection of {number} recipes.
-
-Write in an engaging, warm tone that makes readers excited to cook these dishes.
+Keep it to 40-60 words in a single paragraph. Open with the primary keyword from the title so search engines and readers immediately know the topic. Give a quick, vivid sense of what makes {cuisine} cooking special and what readers will find in this collection of {number} recipes. Sound like a real cook sharing genuine enthusiasm.
 
 IMPORTANT: Format the response as a single <p> tag. The paragraph must be wrapped in <p> and </p> tags. Do NOT include any h2 heading."""
 
-RECIPE_SECTION_TEMPLATE = """Write 50-100 words about this {cuisine} recipe:
+RECIPE_SECTION_TEMPLATE = """Write 45-80 words about this {cuisine} recipe:
 
 Title: {title}
 Description: {description}
 
-Focus on what makes this recipe special, its cultural significance, and why it's worth making. Include cooking tips, techniques, flavor notes, or what makes it authentic {cuisine}.
-
-Write in engaging food-blog style, keep it professional and new york times style, no buzzwords.
+Lead with the recipe title or its main keyword for SEO clarity, then explain in natural, human voice what makes it special. Highlight cultural context, sensory details, and any smart tips or techniques that capture authentic {cuisine} flavor. Avoid buzzwords and keep the tone warm and conversational, like a trusted food writer.
 
 Format the response as a single HTML paragraph using <p> tags."""
 
