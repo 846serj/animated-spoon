@@ -44,7 +44,7 @@ def extract_context(query):
 # Prompt Templates
 INTRO_TEMPLATE = """Write a warm, human introduction for an article titled "{query}".
 
-Keep it to 45-65 words in two or three sentences. Start by naturally mentioning the article topic so readers immediately know what they’re getting. Highlight what makes {cuisine} cooking inviting and what the collection of {number} recipes will help them do. Use conversational language, avoid buzzwords or marketing speak, and sound like a real food writer sharing genuine enthusiasm.
+Keep it to 60-80 words in two or three sentences. Start by naturally mentioning the article topic so readers immediately know what they’re getting. Highlight what makes {cuisine} cooking inviting and what the collection of {number} recipes will help them do. Use conversational language, avoid buzzwords or marketing speak, and sound like a real food writer sharing genuine enthusiasm.
 
 IMPORTANT: Format the response as a single <p> tag. The paragraph must be wrapped in <p> and </p> tags. Do NOT include any h2 heading."""
 
