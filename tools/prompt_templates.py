@@ -42,9 +42,9 @@ def extract_context(query):
     }
 
 # Prompt Templates
-INTRO_TEMPLATE = """Write a concise, search-friendly introduction for an article titled "{query}".
+INTRO_TEMPLATE = """Write a warm, human introduction for an article titled "{query}".
 
-Keep it to 40-60 words in a single paragraph. Open with the primary keyword from the title so search engines and readers immediately know the topic. Give a quick, vivid sense of what makes {cuisine} cooking special and what readers will find in this collection of {number} recipes. Sound like a real cook sharing genuine enthusiasm.
+Keep it to 45-65 words in two or three sentences. Start by naturally mentioning the article topic so readers immediately know what they’re getting. Highlight what makes {cuisine} cooking inviting and what the collection of {number} recipes will help them do. Use conversational language, avoid buzzwords or marketing speak, and sound like a real food writer sharing genuine enthusiasm.
 
 IMPORTANT: Format the response as a single <p> tag. The paragraph must be wrapped in <p> and </p> tags. Do NOT include any h2 heading."""
 
