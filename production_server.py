@@ -4,7 +4,7 @@ Production recipe server - completely self-contained.
 No external imports that could cause embedding generation.
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import os
 import json
 import sys
@@ -12,6 +12,9 @@ import faiss
 import numpy as np
 import openai
 import re
+import requests
+import mimetypes
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
@@ -149,6 +152,35 @@ def generate_recipe_article():
         print(f"Error generating recipe article: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/wordpress/proxy', methods=['GET'])
+def proxy_wordpress_asset():
+    """Proxy remote assets (typically images) for WordPress drafts."""
+    image_url = request.args.get('url', '').strip()
+
+    if not image_url:
+        return jsonify({'error': 'Missing url parameter'}), 400
+
+    parsed = urlparse(image_url)
+    if parsed.scheme not in ('http', 'https'):
+        return jsonify({'error': 'Invalid url scheme'}), 400
+
+    try:
+        upstream_response = requests.get(image_url, stream=True, timeout=15)
+        upstream_response.raise_for_status()
+    except requests.RequestException as exc:
+        return jsonify({'error': f'Failed to fetch image: {exc}'}), 502
+
+    content_type = upstream_response.headers.get('Content-Type')
+    if not content_type:
+        guessed_type, _ = mimetypes.guess_type(parsed.path)
+        content_type = guessed_type or 'application/octet-stream'
+
+    proxied = Response(upstream_response.content, status=200, content_type=content_type)
+    proxied.headers['Cache-Control'] = 'public, max-age=3600'
+    return proxied
+
+
 @app.route('/', methods=['GET'])
 def root():
     """Root endpoint."""
@@ -182,3 +214,4 @@ if __name__ == '__main__':
     print(f"Starting server on port {port}")
     
     app.run(host='0.0.0.0', port=port, debug=False)
+

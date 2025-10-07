@@ -14,7 +14,9 @@ import requests
 import threading
 import time
 import faiss
-from flask import Flask, request, jsonify
+import mimetypes
+from urllib.parse import urlparse
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 
 # Add current directory to path
@@ -428,6 +430,34 @@ def generate_recipe_article():
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
+
+
+@app.route('/api/wordpress/proxy', methods=['GET'])
+def proxy_wordpress_asset():
+    """Proxy remote assets (typically images) for WordPress drafts."""
+    image_url = request.args.get('url', '').strip()
+
+    if not image_url:
+        return jsonify({'error': 'Missing url parameter'}), 400
+
+    parsed = urlparse(image_url)
+    if parsed.scheme not in ('http', 'https'):
+        return jsonify({'error': 'Invalid url scheme'}), 400
+
+    try:
+        upstream_response = requests.get(image_url, stream=True, timeout=15)
+        upstream_response.raise_for_status()
+    except requests.RequestException as exc:
+        return jsonify({'error': f'Failed to fetch image: {exc}'}), 502
+
+    content_type = upstream_response.headers.get('Content-Type')
+    if not content_type:
+        guessed_type, _ = mimetypes.guess_type(parsed.path)
+        content_type = guessed_type or 'application/octet-stream'
+
+    proxied = Response(upstream_response.content, status=200, content_type=content_type)
+    proxied.headers['Cache-Control'] = 'public, max-age=3600'
+    return proxied
 
 @app.route('/', methods=['GET'])
 def root():
