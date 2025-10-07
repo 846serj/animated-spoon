@@ -23,16 +23,10 @@ def generate_article(query, recipes_list):
     # Generate each section
     intro = generate_intro(query, context)
     recipe_sections = generate_recipe_sections(recipes_list, context)
-    conclusion = generate_conclusion(query, context)
-    
-    # Combine into complete article
-    article = f"""{intro}
 
-{recipe_sections}
-
-{conclusion}"""
-    
-    return article
+    # Combine into complete article without a conclusion section
+    article_parts = [intro.strip(), recipe_sections.strip()]
+    return "\n\n".join(part for part in article_parts if part)
 
 def generate_intro(query, context):
     """Generate article introduction."""
