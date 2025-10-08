@@ -18,6 +18,16 @@ from urllib.parse import urlparse
 
 app = Flask(__name__)
 
+WORDPRESS_PROXY_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0.0.0 Safari/537.36"
+    ),
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 # Global variables for pre-computed data
 recipes = None
 index = None
@@ -166,7 +176,12 @@ def proxy_wordpress_asset():
         return jsonify({'error': 'Invalid url scheme'}), 400
 
     try:
-        upstream_response = requests.get(image_url, stream=True, timeout=15)
+        upstream_response = requests.get(
+            image_url,
+            stream=True,
+            timeout=15,
+            headers=WORDPRESS_PROXY_HEADERS,
+        )
         upstream_response.raise_for_status()
     except requests.RequestException as exc:
         return jsonify({'error': f'Failed to fetch image: {exc}'}), 502
