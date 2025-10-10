@@ -60,13 +60,15 @@ recipes_cache = None
 faiss_index = None
 cache_ready = False
 cache_progress = "Starting..."
+cache_error = None
 
 def fetch_all_recipes_from_airtable():
     """Fetch ALL recipes from Airtable and cache them locally."""
-    global recipes_cache, cache_ready, cache_progress
-    
+    global recipes_cache, cache_ready, cache_progress, cache_error
+
     try:
         cache_progress = "Fetching recipes from Airtable..."
+        cache_error = None
         
         api_key = os.getenv("AIRTABLE_API_KEY")
         base_id = os.getenv("AIRTABLE_BASE_ID", "appa4SaUbDRFYM42O")
@@ -160,14 +162,16 @@ def fetch_all_recipes_from_airtable():
         
     except Exception as e:
         cache_progress = f"Error: {str(e)}"
+        cache_error = str(e)
         print(f"Error fetching recipes: {e}")
 
 def build_faiss_index(recipes):
     """Build FAISS index for semantic search."""
-    global faiss_index
-    
+    global faiss_index, cache_error
+
     try:
         cache_progress = "Generating embeddings for FAISS index..."
+        cache_error = None
         
         # Generate embeddings in batches
         batch_size = 50
@@ -211,29 +215,32 @@ def build_faiss_index(recipes):
         
     except Exception as e:
         cache_progress = f"FAISS index error: {str(e)}"
+        cache_error = str(e)
         print(f"Error building FAISS index: {e}")
 
 def load_cached_recipes():
     """Load recipes from local cache if available."""
-    global recipes_cache, faiss_index, cache_ready, cache_progress
-    
+    global recipes_cache, faiss_index, cache_ready, cache_progress, cache_error
+
     try:
         if os.path.exists("data/recipes_cache.json") and os.path.exists("data/recipes_faiss.index"):
             cache_progress = "Loading recipes from local cache..."
             with open("data/recipes_cache.json", "r") as f:
                 recipes_cache = json.load(f)
-            
+
             cache_progress = "Loading FAISS index..."
             faiss_index = faiss.read_index("data/recipes_faiss.index")
-            
+
             cache_ready = True
             cache_progress = f"Cache loaded! {len(recipes_cache)} recipes with FAISS index ready"
+            cache_error = None
             print(f"Loaded {len(recipes_cache)} recipes with FAISS index from cache")
             return True
     except Exception as e:
         cache_progress = f"Cache load error: {str(e)}"
+        cache_error = str(e)
         print(f"Error loading cache: {e}")
-    
+
     return False
 
 def search_recipes_text(query, recipes, k=5):
@@ -473,11 +480,21 @@ def generate_recipe_article():
         
         if not cache_ready:
             print("Cache not ready yet")
+            status_code = 503
+            status = 'loading'
+            error_message = 'Recipe cache not ready yet'
+
+            if cache_error:
+                status_code = 500
+                status = 'error'
+                error_message = 'Recipe cache failed to initialize'
+
             return jsonify({
-                'error': 'Recipe cache not ready yet',
+                'error': error_message,
                 'progress': cache_progress,
-                'status': 'loading'
-            }), 503
+                'status': status,
+                'details': cache_error
+            }), status_code
         
         data = request.get_json()
         query = data.get('query', '')
