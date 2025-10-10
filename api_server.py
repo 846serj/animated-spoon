@@ -45,6 +45,8 @@ WORDPRESS_PROXY_RETRY = Retry(
     allowed_methods=("GET",),
 )
 
+WORDPRESS_PROXY_ERROR_SNIPPET_LENGTH = 512
+
 WORDPRESS_PROXY_SESSION = requests.Session()
 WORDPRESS_PROXY_SESSION.headers.update(WORDPRESS_PROXY_HEADERS)
 _wordpress_adapter = HTTPAdapter(max_retries=WORDPRESS_PROXY_RETRY)
@@ -481,7 +483,30 @@ def proxy_wordpress_asset():
             content_type = upstream_response.headers.get('Content-Type')
             content_length = upstream_response.headers.get('Content-Length')
     except requests.RequestException as exc:
-        return jsonify({'error': f'Failed to fetch image: {exc}'}), 502
+        error_details = {
+            'url': image_url,
+            'exception_type': type(exc).__name__,
+            'message': str(exc),
+        }
+
+        response = getattr(exc, 'response', None)
+        if response is not None:
+            error_details['status_code'] = response.status_code
+            error_details['response_content_type'] = response.headers.get('Content-Type')
+            error_details['response_content_length'] = response.headers.get('Content-Length')
+            try:
+                body_text = response.text
+            except UnicodeDecodeError:
+                body_text = response.content.decode('utf-8', 'replace')
+            error_details['response_body_snippet'] = body_text[:WORDPRESS_PROXY_ERROR_SNIPPET_LENGTH]
+
+        app.logger.warning(
+            "Failed to fetch WordPress proxy image",
+            extra={'image_url': image_url, 'exception_type': type(exc).__name__},
+            exc_info=exc,
+        )
+
+        return jsonify({'error': 'Failed to fetch image', 'details': error_details}), 502
 
     if not content_type:
         guessed_type, _ = mimetypes.guess_type(parsed.path)
