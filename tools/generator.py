@@ -37,6 +37,57 @@ def _deduplicate_recipes(recipes_list):
     return unique_recipes
 
 
+def get_recipe_image_url(recipe):
+    """Return the first valid image URL for a recipe, if available."""
+    if not recipe:
+        return None
+
+    candidate_fields = [
+        "image_link",
+        "image_url",
+        "image",
+        "photo",
+        "picture",
+        "Image",
+        "Photo",
+        "Picture",
+        "Image URL",
+        "Image Link",
+    ]
+
+    for field in candidate_fields:
+        value = recipe.get(field)
+        if isinstance(value, str):
+            url = value.strip()
+            if url:
+                return url
+
+    attachments = recipe.get("attachments")
+
+    # Airtable attachments may be dict, list of dicts, or list of URLs
+    if isinstance(attachments, dict):
+        url = attachments.get("url")
+        if isinstance(url, str):
+            url = url.strip()
+            if url:
+                return url
+
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if isinstance(attachment, dict):
+                url = attachment.get("url")
+                if isinstance(url, str):
+                    url = url.strip()
+                    if url:
+                        return url
+            elif isinstance(attachment, str):
+                url = attachment.strip()
+                if url:
+                    return url
+
+    return None
+
+
 
 def generate_article(query, recipes_list):
     """Generate a complete multi-section article."""
@@ -127,27 +178,11 @@ def generate_recipe_sections(recipes_list, context):
                 max_tokens=400,
                 temperature=0.7
             )
-            
-            # Get image URL from any of the possible image fields
-            image_url = None
-            
-            # Check direct URL fields first (prioritize Image Link)
-            for field in ['image_link', 'image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL', 'Image Link']:
-                if recipe.get(field):
-                    image_url = recipe.get(field)
-                    break
-            
-            # Check Airtable attachments (array of objects with URL property)
-            if not image_url and recipe.get('attachments'):
-                attachments = recipe.get('attachments')
-                if isinstance(attachments, list) and len(attachments) > 0:
-                    if isinstance(attachments[0], dict) and 'url' in attachments[0]:
-                        image_url = attachments[0]['url']
-                    elif isinstance(attachments[0], str):
-                        image_url = attachments[0]
-            
+
+            image_url = get_recipe_image_url(recipe)
+
             section = f"<h2>{recipe['title']}</h2>"
-            
+
             # Add debug info to first recipe
             if len(sections) == 0 and recipes_list:
                 section = debug_info + "\n" + section
@@ -190,24 +225,8 @@ def generate_recipe_sections(recipes_list, context):
             
         except Exception as e:
             print(f"Error generating section for {recipe['title']}: {e}")
-            # Get image URL from any of the possible image fields
-            image_url = None
-            
-            # Check direct URL fields first (prioritize Image Link)
-            for field in ['image_link', 'image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL', 'Image Link']:
-                if recipe.get(field):
-                    image_url = recipe.get(field)
-                    break
-            
-            # Check Airtable attachments (array of objects with URL property)
-            if not image_url and recipe.get('attachments'):
-                attachments = recipe.get('attachments')
-                if isinstance(attachments, list) and len(attachments) > 0:
-                    if isinstance(attachments[0], dict) and 'url' in attachments[0]:
-                        image_url = attachments[0]['url']
-                    elif isinstance(attachments[0], str):
-                        image_url = attachments[0]
-            
+            image_url = get_recipe_image_url(recipe)
+
             fallback_section = f"<h2>{recipe['title']}</h2>"
             
             # Add image if available
