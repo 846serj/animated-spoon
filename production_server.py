@@ -183,12 +183,7 @@ def generate_recipe_article():
 
 @app.route('/api/wordpress/proxy', methods=['GET'])
 def proxy_wordpress_asset():
-    """Proxy remote assets (typically images) for WordPress drafts.
-
-    Accepts an optional ``referer`` query parameter that will be forwarded as a
-    ``Referer`` header. This is useful for CDNs that enforce hotlink
-    protection and refuse to serve assets without an expected referrer.
-    """
+    """Proxy remote assets (typically images) for WordPress drafts."""
     image_url = request.args.get('url', '').strip()
 
     if not image_url:
@@ -198,19 +193,11 @@ def proxy_wordpress_asset():
     if parsed.scheme not in ('http', 'https'):
         return jsonify({'error': 'Invalid url scheme'}), 400
 
-    referer = request.args.get('referer', '').strip()
-    request_headers = WORDPRESS_PROXY_HEADERS.copy()
-    if referer:
-        referer_parsed = urlparse(referer)
-        if referer_parsed.scheme in ('http', 'https'):
-            request_headers['Referer'] = referer
-
     try:
         with WORDPRESS_PROXY_SESSION.get(
             image_url,
             stream=True,
             timeout=WORDPRESS_PROXY_TIMEOUT,
-            headers=request_headers,
         ) as upstream_response:
             upstream_response.raise_for_status()
             content = upstream_response.content
@@ -222,8 +209,6 @@ def proxy_wordpress_asset():
             'exception_type': type(exc).__name__,
             'message': str(exc),
         }
-        if referer:
-            error_details['referer'] = referer
 
         response = getattr(exc, 'response', None)
         if response is not None:
