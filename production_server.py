@@ -18,8 +18,6 @@ import mimetypes
 from urllib.parse import urlparse
 from urllib3.util import Retry
 
-from tools.generator import get_recipe_image_url
-
 app = Flask(__name__)
 
 WORDPRESS_PROXY_HEADERS = {
@@ -52,58 +50,6 @@ WORDPRESS_PROXY_SESSION.mount("https://", _wordpress_adapter)
 recipes = None
 index = None
 id_to_recipe = None
-
-
-def filter_recipes_with_inaccessible_images(recipes_list):
-    """Remove recipes whose images cannot be fetched via the WordPress proxy."""
-    if not recipes_list:
-        return []
-
-    filtered = []
-    removed_titles = []
-
-    for recipe in recipes_list:
-        image_url = get_recipe_image_url(recipe)
-
-        if not image_url:
-            filtered.append(recipe)
-            continue
-
-        parsed = urlparse(image_url)
-        if parsed.scheme not in ("http", "https"):
-            filtered.append(recipe)
-            continue
-
-        try:
-            with WORDPRESS_PROXY_SESSION.get(
-                image_url,
-                stream=True,
-                timeout=WORDPRESS_PROXY_TIMEOUT,
-            ) as response:
-                response.raise_for_status()
-        except requests.RequestException as exc:
-            removed_titles.append(recipe.get("title", "Untitled Recipe"))
-            app.logger.warning(
-                "Skipping recipe due to inaccessible image",
-                extra={
-                    "image_url": image_url,
-                    "recipe_title": recipe.get("title"),
-                    "exception_type": type(exc).__name__,
-                },
-                exc_info=exc,
-            )
-            continue
-
-        filtered.append(recipe)
-
-    if removed_titles:
-        print(
-            "Removed {} recipe(s) due to inaccessible images: {}".format(
-                len(removed_titles), removed_titles
-            )
-        )
-
-    return filtered
 
 def load_data():
     """Load pre-computed data files."""
@@ -217,29 +163,16 @@ def generate_recipe_article():
         if not top_recipes:
             return jsonify({'error': 'No recipes found'}), 404
         
-        recipes_for_article = filter_recipes_with_inaccessible_images(top_recipes)
-
-        if not recipes_for_article:
-            return jsonify({
-                'error': 'All candidate recipes were removed because their images could not be fetched',
-                'status': 'image_fetch_failed'
-            }), 502
-
-        if len(recipes_for_article) < len(top_recipes):
-            print(
-                f"Continuing with {len(recipes_for_article)} recipe(s) after removing {len(top_recipes) - len(recipes_for_article)} with inaccessible images"
-            )
-
         # Generate article
-        article = generate_article(query, recipes_for_article)
-
+        article = generate_article(query, top_recipes)
+        
         # Extract sources
-        sources = [recipe.get('url') for recipe in recipes_for_article if recipe.get('url')]
-
+        sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
+        
         return jsonify({
             'article': article,
             'sources': sources,
-            'recipe_count': len(recipes_for_article),
+            'recipe_count': len(top_recipes),
             'query': query
         })
         
