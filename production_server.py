@@ -46,6 +46,8 @@ _wordpress_adapter = HTTPAdapter(max_retries=WORDPRESS_PROXY_RETRY)
 WORDPRESS_PROXY_SESSION.mount("http://", _wordpress_adapter)
 WORDPRESS_PROXY_SESSION.mount("https://", _wordpress_adapter)
 
+BLOCKED_IMAGE_DOMAINS = {"smushcdn.com"}
+
 # Global variables for pre-computed data
 recipes = None
 index = None
@@ -96,11 +98,96 @@ def search_recipes(query, k=5):
                 recipe = recipes[idx].copy()
                 recipe['similarity_score'] = float(score)
                 top_recipes.append(recipe)
-        
+
         return top_recipes
     except Exception as e:
         print(f"Error searching recipes: {e}")
         return []
+
+
+def _get_image_url_from_recipe(recipe):
+    """Extract the first available image URL from a recipe record."""
+    candidate_fields = [
+        "image_link",
+        "image_url",
+        "image",
+        "photo",
+        "picture",
+        "Image",
+        "Photo",
+        "Picture",
+        "Image URL",
+        "Image Link",
+    ]
+
+    for field in candidate_fields:
+        value = recipe.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    attachments = recipe.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if isinstance(attachment, dict):
+                url = attachment.get("url")
+                if isinstance(url, str) and url.strip():
+                    return url.strip()
+            elif isinstance(attachment, str) and attachment.strip():
+                return attachment.strip()
+
+    return None
+
+
+def _is_blocked_image_domain(image_url):
+    """Return True if the image URL belongs to a blocked domain."""
+    try:
+        hostname = urlparse(image_url).hostname or ""
+    except ValueError:
+        return False
+
+    hostname = hostname.lower()
+    return any(hostname.endswith(domain) for domain in BLOCKED_IMAGE_DOMAINS)
+
+
+def filter_inaccessible_image_recipes(recipes):
+    """Remove recipes whose images cannot be proxied reliably."""
+    accessible_recipes = []
+    removed_recipes = []
+
+    for recipe in recipes:
+        image_url = _get_image_url_from_recipe(recipe)
+
+        if not image_url:
+            accessible_recipes.append(recipe)
+            continue
+
+        if _is_blocked_image_domain(image_url):
+            removed_recipes.append({
+                "title": recipe.get("title", "Untitled Recipe"),
+                "image_url": image_url,
+                "reason": "blocked_domain",
+            })
+            continue
+
+        try:
+            with WORDPRESS_PROXY_SESSION.get(
+                image_url,
+                stream=True,
+                timeout=WORDPRESS_PROXY_TIMEOUT,
+            ) as upstream_response:
+                upstream_response.raise_for_status()
+        except requests.RequestException as exc:
+            removed_recipes.append({
+                "title": recipe.get("title", "Untitled Recipe"),
+                "image_url": image_url,
+                "reason": "fetch_error",
+                "error": str(exc),
+            })
+            continue
+
+        accessible_recipes.append(recipe)
+
+    return accessible_recipes, removed_recipes
 
 def generate_article(query, recipes):
     """Generate article from recipes."""
@@ -162,18 +249,35 @@ def generate_recipe_article():
         
         if not top_recipes:
             return jsonify({'error': 'No recipes found'}), 404
-        
+
+        filtered_recipes, removed_recipes = filter_inaccessible_image_recipes(top_recipes)
+
+        if removed_recipes:
+            print(
+                "Removed recipes with inaccessible images:",
+                [(r.get('title'), r.get('image_url')) for r in removed_recipes]
+            )
+
+        if not filtered_recipes:
+            return jsonify({
+                'error': 'No recipes with accessible images found',
+                'removed_recipes': removed_recipes,
+            }), 502
+
+        top_recipes = filtered_recipes
+
         # Generate article
         article = generate_article(query, top_recipes)
-        
+
         # Extract sources
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
-        
+
         return jsonify({
             'article': article,
             'sources': sources,
             'recipe_count': len(top_recipes),
-            'query': query
+            'query': query,
+            'removed_recipes': removed_recipes,
         })
         
     except Exception as e:
