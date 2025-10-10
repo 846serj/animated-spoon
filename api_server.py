@@ -58,6 +58,8 @@ recipes_cache = None
 faiss_index = None
 cache_ready = False
 cache_progress = "Starting..."
+_cache_bootstrapped = False
+_cache_lock = threading.Lock()
 
 def fetch_all_recipes_from_airtable():
     """Fetch ALL recipes from Airtable and cache them locally."""
@@ -565,21 +567,38 @@ def status():
         'recipes_loaded': len(recipes_cache) if recipes_cache else 0
     })
 
+def ensure_cache_bootstrapped():
+    """Make sure the recipe cache has been initialised."""
+    global _cache_bootstrapped
+
+    with _cache_lock:
+        if _cache_bootstrapped:
+            return
+
+        print("Bootstrapping recipe cache...")
+
+        if not load_cached_recipes():
+            print("No cache found. Starting background download...")
+            thread = threading.Thread(target=fetch_all_recipes_from_airtable)
+            thread.daemon = True
+            thread.start()
+        else:
+            print("Cache loaded from disk.")
+
+        _cache_bootstrapped = True
+
+
+# Ensure the cache bootstrap runs when the module is imported (e.g. by gunicorn)
+ensure_cache_bootstrapped()
+
+
 if __name__ == '__main__':
     print("Starting local cache recipe server...")
-    
-    # Try to load from cache first
-    if not load_cached_recipes():
-        print("No cache found. Starting background download...")
-        # Start background thread to fetch all recipes
-        thread = threading.Thread(target=fetch_all_recipes_from_airtable)
-        thread.daemon = True
-        thread.start()
-    
+
     print("Server ready! (Cache may be loading in background)")
-    
+
     # Get port from environment variable
     port = int(os.environ.get('PORT', 3004))
     print(f"Starting server on port {port}")
-    
+
     app.run(host='0.0.0.0', port=port, debug=False)
