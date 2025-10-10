@@ -11,6 +11,7 @@ import numpy as np
 import openai
 import re
 import requests
+from requests.adapters import HTTPAdapter
 import threading
 import time
 import faiss
@@ -18,6 +19,7 @@ import mimetypes
 from urllib.parse import urlparse
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+from urllib3.util import Retry
 
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +36,20 @@ WORDPRESS_PROXY_HEADERS = {
     "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
+
+WORDPRESS_PROXY_TIMEOUT = (5, 30)
+WORDPRESS_PROXY_RETRY = Retry(
+    total=3,
+    backoff_factor=0.5,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=("GET",),
+)
+
+WORDPRESS_PROXY_SESSION = requests.Session()
+WORDPRESS_PROXY_SESSION.headers.update(WORDPRESS_PROXY_HEADERS)
+_wordpress_adapter = HTTPAdapter(max_retries=WORDPRESS_PROXY_RETRY)
+WORDPRESS_PROXY_SESSION.mount("http://", _wordpress_adapter)
+WORDPRESS_PROXY_SESSION.mount("https://", _wordpress_adapter)
 
 # Global variables for cached data
 recipes_cache = None
@@ -455,23 +471,26 @@ def proxy_wordpress_asset():
         return jsonify({'error': 'Invalid url scheme'}), 400
 
     try:
-        upstream_response = requests.get(
+        with WORDPRESS_PROXY_SESSION.get(
             image_url,
             stream=True,
-            timeout=15,
-            headers=WORDPRESS_PROXY_HEADERS,
-        )
-        upstream_response.raise_for_status()
+            timeout=WORDPRESS_PROXY_TIMEOUT,
+        ) as upstream_response:
+            upstream_response.raise_for_status()
+            content = upstream_response.content
+            content_type = upstream_response.headers.get('Content-Type')
+            content_length = upstream_response.headers.get('Content-Length')
     except requests.RequestException as exc:
         return jsonify({'error': f'Failed to fetch image: {exc}'}), 502
 
-    content_type = upstream_response.headers.get('Content-Type')
     if not content_type:
         guessed_type, _ = mimetypes.guess_type(parsed.path)
         content_type = guessed_type or 'application/octet-stream'
 
-    proxied = Response(upstream_response.content, status=200, content_type=content_type)
+    proxied = Response(content, status=200, content_type=content_type)
     proxied.headers['Cache-Control'] = 'public, max-age=3600'
+    if content_length:
+        proxied.headers['Content-Length'] = content_length
     return proxied
 
 @app.route('/', methods=['GET'])
