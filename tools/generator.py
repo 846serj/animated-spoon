@@ -99,19 +99,6 @@ def generate_recipe_sections(recipes_list, context):
     """Generate individual recipe sections."""
     sections = []
     
-    # Debug: Print available fields for first recipe
-    if recipes_list:
-        print(f"DEBUG: First recipe fields: {list(recipes_list[0].keys())}")
-        print(f"DEBUG: All field values for first recipe:")
-        for key, value in recipes_list[0].items():
-            if 'image' in key.lower() or 'photo' in key.lower() or 'picture' in key.lower() or 'url' in key.lower():
-                print(f"  {key}: {value}")
-        
-        # Also add debug info to the first section for API response
-        debug_info = f"<!-- DEBUG: Available fields: {list(recipes_list[0].keys())} -->"
-        debug_info += f"<!-- Image fields: {[(k, v) for k, v in recipes_list[0].items() if 'image' in k.lower() or 'photo' in k.lower() or 'picture' in k.lower() or 'url' in k.lower()]} -->"
-        debug_info += f"<!-- Attachments: {recipes_list[0].get('attachments', 'None')} -->"
-    
     for recipe in recipes_list:
         try:
             response = openai.chat.completions.create(
@@ -147,10 +134,6 @@ def generate_recipe_sections(recipes_list, context):
                         image_url = attachments[0]
             
             section = f"<h2>{recipe['title']}</h2>"
-            
-            # Add debug info to first recipe
-            if len(sections) == 0 and recipes_list:
-                section = debug_info + "\n" + section
             
             # Add image if available
             if image_url and image_url.strip():
