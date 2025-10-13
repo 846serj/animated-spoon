@@ -2,15 +2,161 @@
 Enhanced LLM-based content generation for recipes with multi-section article structure.
 """
 
+import re
+from html import escape
+from urllib.parse import urlparse
+
 import openai
 from config import *
 from .prompt_templates import (
-    extract_context, 
-    INTRO_TEMPLATE, 
-    RECIPE_SECTION_TEMPLATE, 
-    COOKING_TIPS_TEMPLATE, 
+    extract_context,
+    INTRO_TEMPLATE,
+    RECIPE_SECTION_TEMPLATE,
+    COOKING_TIPS_TEMPLATE,
     CONCLUSION_TEMPLATE
 )
+
+
+def _slugify_heading(text):
+    """Create a stable slug for heading IDs."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    if not slug:
+        slug = "recipe"
+    return f"h-{slug}"
+
+
+def _extract_paragraphs(html_content):
+    """Return paragraph content with <p> tags removed."""
+    content = (html_content or "").strip()
+    if not content:
+        return []
+
+    matches = re.findall(r"<p[^>]*>(.*?)</p>", content, flags=re.I | re.S)
+    if matches:
+        return [match.strip() for match in matches if match.strip()]
+
+    parts = [part.strip() for part in re.split(r"\n\s*\n", content) if part.strip()]
+    if parts:
+        return parts
+
+    return [content]
+
+
+def _format_heading_block(title):
+    """Return a Gutenberg heading block for the given title."""
+    raw_title = title or "Untitled Recipe"
+    safe_title = escape(raw_title)
+    heading_id = _slugify_heading(raw_title)
+    return (
+        f"<!-- wp:heading {{\"id\":\"{heading_id}\"}} -->\n"
+        f"<h2 class=\"wp-block-heading\" id=\"{heading_id}\">{safe_title}</h2>\n"
+        f"<!-- /wp:heading -->"
+    )
+
+
+def _image_caption_from_url(image_url):
+    """Generate a human-readable caption from the image URL domain."""
+    try:
+        domain = urlparse(image_url).netloc
+        if domain:
+            return f"Image credit: {domain}"
+    except Exception:
+        pass
+    return "Image credit: Source"
+
+
+def _format_image_block(image_url, title):
+    """Return a Gutenberg image block for the given image."""
+    safe_url = escape(image_url.strip())
+    safe_title = escape(title or "Recipe image")
+    caption = escape(_image_caption_from_url(image_url))
+    return (
+        "<!-- wp:image -->\n"
+        f"<figure class=\"wp-block-image\"><img width=\"1280\" height=\"720\" "
+        "style=\"width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;\" "
+        f"src=\"{safe_url}\" alt=\"{safe_title}\"><figcaption style=\"font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;\">"
+        f"{caption}</figcaption></figure>\n"
+        "<!-- /wp:image -->"
+    )
+
+
+def _format_paragraph_block(content):
+    """Wrap content in a Gutenberg paragraph block without nested <p> tags."""
+    cleaned = re.sub(r"</?p[^>]*>", "", content or "", flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        cleaned = ""
+    return (
+        "<!-- wp:paragraph -->\n"
+        f"<p>{cleaned}</p>\n"
+        "<!-- /wp:paragraph -->"
+    )
+
+
+def _find_image_url(recipe):
+    """Retrieve the best available image URL for a recipe."""
+    if not recipe:
+        return None
+
+    for field in [
+        "image_link",
+        "image_url",
+        "image",
+        "photo",
+        "picture",
+        "Image",
+        "Photo",
+        "Picture",
+        "Image URL",
+        "Image Link",
+    ]:
+        value = recipe.get(field)
+        if value:
+            return value
+
+    attachments = recipe.get("attachments")
+    if isinstance(attachments, list) and attachments:
+        first = attachments[0]
+        if isinstance(first, dict) and first.get("url"):
+            return first["url"]
+        if isinstance(first, str):
+            return first
+
+    return None
+
+
+def _fallback_description(recipe):
+    """Create a concise fallback description using ingredients and instructions."""
+    ingredients = recipe.get("ingredients", "") if recipe else ""
+    instructions = recipe.get("instructions", "") if recipe else ""
+    fallback_text = f"{ingredients} {instructions}".strip()
+    words = fallback_text.split()
+    if len(words) > 100:
+        fallback_text = " ".join(words[:100]) + "..."
+    if not fallback_text:
+        title = recipe.get("title") if recipe else "Recipe"
+        fallback_text = f"Enjoy this {title} recipe."
+    return fallback_text
+
+
+def _prepare_description_text(raw_content, recipe):
+    """Normalize model content into a single paragraph with optional link."""
+    paragraphs = _extract_paragraphs(raw_content)
+    if not paragraphs:
+        paragraphs = [_fallback_description(recipe)]
+
+    description = " ".join(part.strip() for part in paragraphs if part.strip())
+    description = re.sub(r"\s+", " ", description).strip()
+    if not description:
+        description = _fallback_description(recipe)
+
+    recipe_url = recipe.get("url") if recipe else None
+    if recipe_url:
+        description = (
+            f"{description} <a href=\"{escape(recipe_url, quote=True)}\">View Full Recipe</a>"
+        )
+
+    return description
 
 def _deduplicate_recipes(recipes_list):
     """Remove duplicate recipe entries while preserving order."""
@@ -80,26 +226,23 @@ def generate_intro(query, context):
             temperature=0.7
         )
         content = response.choices[0].message.content.strip()
-        
-        # Ensure content is properly formatted as HTML paragraphs
-        if not content.startswith('<p>') and not content.startswith('<h2>'):
-            # Split into paragraphs and wrap each in <p> tags
-            paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
-            if paragraphs:
-                content = '\n\n'.join([f'<p>{p}</p>' for p in paragraphs])
-            else:
-                content = f'<p>{content}</p>'
-        
-        return content
+        paragraphs = _extract_paragraphs(content)
+        if not paragraphs:
+            paragraphs = [content]
+        return "\n\n".join(_format_paragraph_block(p) for p in paragraphs if p.strip())
     except Exception as e:
         print(f"Error generating intro: {e}")
-        return f"<p>Welcome to our collection of {context['cuisine']} recipes!</p>"
+        fallback = f"Welcome to our collection of {context['cuisine']} recipes!"
+        return _format_paragraph_block(fallback)
 
 def generate_recipe_sections(recipes_list, context):
     """Generate individual recipe sections."""
     sections = []
-    
+
     for recipe in recipes_list:
+        title = recipe.get('title', 'Recipe')
+        image_url = _find_image_url(recipe)
+
         try:
             response = openai.chat.completions.create(
                 model=LLM_MODEL,
@@ -114,122 +257,19 @@ def generate_recipe_sections(recipes_list, context):
                 max_tokens=400,
                 temperature=0.7
             )
-            
-            # Get image URL from any of the possible image fields
-            image_url = None
-            
-            # Check direct URL fields first (prioritize Image Link)
-            for field in ['image_link', 'image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL', 'Image Link']:
-                if recipe.get(field):
-                    image_url = recipe.get(field)
-                    break
-            
-            # Check Airtable attachments (array of objects with URL property)
-            if not image_url and recipe.get('attachments'):
-                attachments = recipe.get('attachments')
-                if isinstance(attachments, list) and len(attachments) > 0:
-                    if isinstance(attachments[0], dict) and 'url' in attachments[0]:
-                        image_url = attachments[0]['url']
-                    elif isinstance(attachments[0], str):
-                        image_url = attachments[0]
-            
-            section = f"<h2>{recipe['title']}</h2>"
-            
-            # Add image if available
-            if image_url and image_url.strip():
-                # Extract domain from image URL for credit
-                try:
-                    from urllib.parse import urlparse
-                    parsed_url = urlparse(image_url)
-                    domain = parsed_url.netloc
-                    if domain:
-                        caption = f"Image credit: {domain}"
-                    else:
-                        caption = "Image credit: Source"
-                except:
-                    caption = "Image credit: Source"
-                
-                section += f'\n<figure style="margin: 10px 0; text-align: center;">'
-                section += (
-                    f'\n<img src="{image_url}" alt="{recipe["title"]}" '
-                    f'width="1280" height="720" '
-                    f'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;">'
-                )
-                section += f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
-                section += f'\n</figure>'
-            
-            # Ensure content is properly formatted as HTML paragraph
             content = response.choices[0].message.content.strip()
-            
-            # If content doesn't have <p> tags, wrap it as a single paragraph
-            if not content.startswith('<p>'):
-                content = f'<p>{content}</p>'
-            
-            section += f"\n{content}"
-            
-            if recipe.get('url'):
-                section += f'\n<p><a href="{recipe["url"]}">View Full Recipe</a></p>'
-            sections.append(section)
-            
+            description = _prepare_description_text(content, recipe)
         except Exception as e:
             print(f"Error generating section for {recipe['title']}: {e}")
-            # Get image URL from any of the possible image fields
-            image_url = None
-            
-            # Check direct URL fields first (prioritize Image Link)
-            for field in ['image_link', 'image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL', 'Image Link']:
-                if recipe.get(field):
-                    image_url = recipe.get(field)
-                    break
-            
-            # Check Airtable attachments (array of objects with URL property)
-            if not image_url and recipe.get('attachments'):
-                attachments = recipe.get('attachments')
-                if isinstance(attachments, list) and len(attachments) > 0:
-                    if isinstance(attachments[0], dict) and 'url' in attachments[0]:
-                        image_url = attachments[0]['url']
-                    elif isinstance(attachments[0], str):
-                        image_url = attachments[0]
-            
-            fallback_section = f"<h2>{recipe['title']}</h2>"
-            
-            # Add image if available
-            if image_url and image_url.strip():
-                # Extract domain from image URL for credit
-                try:
-                    from urllib.parse import urlparse
-                    parsed_url = urlparse(image_url)
-                    domain = parsed_url.netloc
-                    if domain:
-                        caption = f"Image credit: {domain}"
-                    else:
-                        caption = "Image credit: Source"
-                except:
-                    caption = "Image credit: Source"
-                
-                fallback_section += f'\n<figure style="margin: 10px 0; text-align: center;">'
-                fallback_section += (
-                    f'\n<img src="{image_url}" alt="{recipe["title"]}" '
-                    f'width="1280" height="720" '
-                    f'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;">'
-                )
-                fallback_section += f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
-                fallback_section += f'\n</figure>'
-            
-            # Create a concise fallback description (50-100 words)
-            ingredients = recipe.get('ingredients', '')
-            instructions = recipe.get('instructions', '')
-            fallback_text = f"{ingredients} {instructions}".strip()
-            
-            # Truncate to approximately 50-100 words if too long
-            words = fallback_text.split()
-            if len(words) > 100:
-                fallback_text = ' '.join(words[:100]) + '...'
-            
-            fallback_section += f"<p>{fallback_text}</p>"
-            
-            sections.append(fallback_section)
-    
+            description = _fallback_description(recipe)
+
+        section_parts = [_format_heading_block(title)]
+        if image_url and image_url.strip():
+            section_parts.append(_format_image_block(image_url, title))
+        section_parts.append(_format_paragraph_block(description))
+
+        sections.append("\n\n".join(section_parts))
+
     return "\n\n".join(sections)
 
 def generate_cooking_tips(context):
@@ -244,10 +284,15 @@ def generate_cooking_tips(context):
             max_tokens=400,
             temperature=0.7
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content.strip()
+        paragraphs = _extract_paragraphs(content)
+        if not paragraphs:
+            paragraphs = [content]
+        return "\n\n".join(_format_paragraph_block(p) for p in paragraphs if p.strip())
     except Exception as e:
         print(f"Error generating cooking tips: {e}")
-        return f"<p>Master the art of {context['cuisine']} cooking with these essential tips.</p>"
+        fallback = f"Master the art of {context['cuisine']} cooking with these essential tips."
+        return _format_paragraph_block(fallback)
 
 def generate_conclusion(query, context):
     """Generate article conclusion."""
@@ -265,20 +310,14 @@ def generate_conclusion(query, context):
             temperature=0.7
         )
         content = response.choices[0].message.content.strip()
-        
-        # Ensure content is properly formatted as HTML paragraphs
-        if not content.startswith('<p>') and not content.startswith('<h2>'):
-            # Split into paragraphs and wrap each in <p> tags
-            paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
-            if paragraphs:
-                content = '\n\n'.join([f'<p>{p}</p>' for p in paragraphs])
-            else:
-                content = f'<p>{content}</p>'
-        
-        return content
+        paragraphs = _extract_paragraphs(content)
+        if not paragraphs:
+            paragraphs = [content]
+        return "\n\n".join(_format_paragraph_block(p) for p in paragraphs if p.strip())
     except Exception as e:
         print(f"Error generating conclusion: {e}")
-        return f"<h2>Conclusion</h2><p>We hope you enjoy exploring these {context['cuisine']} recipes!</p>"
+        fallback = f"We hope you enjoy exploring these {context['cuisine']} recipes!"
+        return _format_paragraph_block(fallback)
 
 # Legacy function for backward compatibility
 def generate_summary(recipes_list):
