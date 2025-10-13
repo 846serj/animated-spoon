@@ -48,9 +48,9 @@ def _format_heading_block(title):
     safe_title = escape(raw_title)
     heading_id = _slugify_heading(raw_title)
     return (
-        f"<!-- wp:heading {{\"id\":\"{heading_id}\"}} -->\n"
+        "<!-- wp:heading -->\n"
         f"<h2 class=\"wp-block-heading\" id=\"{heading_id}\">{safe_title}</h2>\n"
-        f"<!-- /wp:heading -->"
+        "<!-- /wp:heading -->"
     )
 
 
@@ -72,10 +72,7 @@ def _format_image_block(image_url, title):
     caption = escape(_image_caption_from_url(image_url))
     return (
         "<!-- wp:image -->\n"
-        f"<figure class=\"wp-block-image\"><img width=\"1280\" height=\"720\" "
-        "style=\"width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;\" "
-        f"src=\"{safe_url}\" alt=\"{safe_title}\"><figcaption style=\"font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;\">"
-        f"{caption}</figcaption></figure>\n"
+        f"<figure class=\"wp-block-image\"><img src=\"{safe_url}\" alt=\"{safe_title}\"/><figcaption class=\"wp-element-caption\">{caption}</figcaption></figure>\n"
         "<!-- /wp:image -->"
     )
 
