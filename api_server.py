@@ -11,7 +11,6 @@ import numpy as np
 import openai
 import re
 import requests
-from requests.adapters import HTTPAdapter
 import threading
 import time
 import faiss
@@ -24,37 +23,12 @@ from tools.image_utils import (
 )
 from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
-from urllib3.util import Retry
 
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__)
 CORS(app, origins=["https://test-for-write.onrender.com", "http://localhost:3000", "http://localhost:3003"])
-
-WORDPRESS_PROXY_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/121.0.0.0 Safari/537.36"
-    ),
-    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
-WORDPRESS_PROXY_TIMEOUT = (5, 30)
-WORDPRESS_PROXY_RETRY = Retry(
-    total=3,
-    backoff_factor=0.5,
-    status_forcelist=(429, 500, 502, 503, 504),
-    allowed_methods=("HEAD", "GET"),
-)
-
-WORDPRESS_PROXY_SESSION = requests.Session()
-WORDPRESS_PROXY_SESSION.headers.update(WORDPRESS_PROXY_HEADERS)
-_wordpress_adapter = HTTPAdapter(max_retries=WORDPRESS_PROXY_RETRY)
-WORDPRESS_PROXY_SESSION.mount("http://", _wordpress_adapter)
-WORDPRESS_PROXY_SESSION.mount("https://", _wordpress_adapter)
 
 BLOCKED_IMAGE_DOMAINS = {"smushcdn.com"}
 
@@ -298,24 +272,8 @@ def _is_blocked_image_domain(image_url):
     return any(hostname.endswith(domain) for domain in BLOCKED_IMAGE_DOMAINS)
 
 
-def _is_transient_image_fetch_error(error: requests.RequestException) -> bool:
-    """Return True when an image fetch failure looks temporary."""
-    if isinstance(error, (requests.Timeout, requests.ConnectionError)):
-        return True
-
-    response = getattr(error, "response", None)
-    if response is None:
-        return False
-
-    status_code = getattr(response, "status_code", None)
-    if status_code is None:
-        return False
-
-    return status_code >= 500 or status_code == 429
-
-
 def filter_inaccessible_image_recipes(recipes):
-    """Remove recipes whose remote images cannot be reached reliably."""
+    """Remove recipes whose remote images cannot be hotlinked safely."""
     accessible_recipes = []
     removed_recipes = []
 
@@ -336,49 +294,18 @@ def filter_inaccessible_image_recipes(recipes):
             continue
 
         try:
-            response = WORDPRESS_PROXY_SESSION.head(
-                image_url,
-                allow_redirects=True,
-                timeout=WORDPRESS_PROXY_TIMEOUT,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            if _is_transient_image_fetch_error(exc):
-                print(
-                    "Transient image availability issue (HEAD)",
-                    recipe.get("title", "Untitled Recipe"),
-                    image_url,
-                    getattr(getattr(exc, "response", None), "status_code", None),
-                )
-                accessible_recipes.append(recipe)
-                continue
+            parsed = urlparse(image_url)
+        except ValueError:
+            parsed = None
 
-            try:
-                with WORDPRESS_PROXY_SESSION.get(
-                    image_url,
-                    stream=True,
-                    timeout=WORDPRESS_PROXY_TIMEOUT,
-                ) as upstream_response:
-                    upstream_response.raise_for_status()
-            except requests.RequestException as exc_get:
-                if _is_transient_image_fetch_error(exc_get):
-                    print(
-                        "Transient image availability issue (GET)",
-                        recipe.get("title", "Untitled Recipe"),
-                        image_url,
-                        getattr(getattr(exc_get, "response", None), "status_code", None),
-                    )
-                    accessible_recipes.append(recipe)
-                    continue
-
-                removed_recipes.append({
-                    "title": recipe.get("title", "Untitled Recipe"),
-                    "image_url": image_url,
-                    "airtable_field": airtable_field,
-                    "reason": "fetch_error",
-                    "error": str(exc_get),
-                })
-                continue
+        if not parsed or parsed.scheme not in ("http", "https") or not parsed.netloc:
+            removed_recipes.append({
+                "title": recipe.get("title", "Untitled Recipe"),
+                "image_url": image_url,
+                "airtable_field": airtable_field,
+                "reason": "invalid_url",
+            })
+            continue
 
         accessible_recipes.append(recipe)
 

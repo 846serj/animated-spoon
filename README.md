@@ -9,6 +9,8 @@ A modular RAG (Retrieval-Augmented Generation) pipeline for recipe content creat
 - **Scalable**: Handles 10k+ recipes with batch embedding generation
 - **Flexible**: Easy to swap LLMs or vector stores
 - **WordPress Ready**: Built-in HTML output generation
+- **Remote Image Hotlinking**: Articles embed the original Airtable image URLs
+  directly so nothing ever touches the destination site's media library
 - **Filtered Search**: Search by category and tags
 - **Real-time Updates**: Fetch latest data from Airtable on demand
 
