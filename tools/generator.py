@@ -16,18 +16,26 @@ from .prompt_templates import (
 )
 
 
-def _build_image_figure(title: str, image_url: Optional[str]) -> str:
-    """Return a ready-to-use HTML figure for a remote recipe image."""
+def _build_image_figure(
+    title: str,
+    image_url: Optional[str],
+    airtable_field: Optional[str],
+) -> str:
+    """Return a ready-to-use HTML figure that hotlinks the remote recipe image."""
     if not image_url:
         return ""
 
     caption = build_image_credit(image_url)
+    source_field = airtable_field or "unknown"
     return (
         '\n<figure style="margin: 10px 0; text-align: center;" '
-        'data-image-hosting="remote">'
+        'data-image-hosting="remote" '
+        'data-image-hotlink="true" '
+        f'data-image-source-field="{source_field}">'
         f'\n<img src="{image_url}" alt="{title}" '
         'width="1280" height="720" '
         'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;" '
+        'loading="lazy" '
         f'data-original-image-url="{image_url}">'
         f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
         '\n</figure>'
@@ -137,9 +145,9 @@ def generate_recipe_sections(recipes_list, context):
             )
             
             section = f"<h2>{recipe['title']}</h2>"
-            image_url, _ = extract_remote_image_url(recipe)
+            image_url, airtable_field = extract_remote_image_url(recipe)
 
-            section += _build_image_figure(recipe['title'], image_url)
+            section += _build_image_figure(recipe['title'], image_url, airtable_field)
             
             # Ensure content is properly formatted as HTML paragraph
             content = response.choices[0].message.content.strip()
@@ -156,11 +164,15 @@ def generate_recipe_sections(recipes_list, context):
             
         except Exception as e:
             print(f"Error generating section for {recipe['title']}: {e}")
-            image_url, _ = extract_remote_image_url(recipe)
+            image_url, airtable_field = extract_remote_image_url(recipe)
 
             fallback_section = f"<h2>{recipe['title']}</h2>"
 
-            fallback_section += _build_image_figure(recipe['title'], image_url)
+            fallback_section += _build_image_figure(
+                recipe['title'],
+                image_url,
+                airtable_field,
+            )
             
             # Create a concise fallback description (50-100 words)
             ingredients = recipe.get('ingredients', '')

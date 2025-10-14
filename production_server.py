@@ -105,9 +105,8 @@ def search_recipes(query, k=5):
 
 
 def _get_image_url_from_recipe(recipe):
-    """Extract the first available remote image URL from a recipe record."""
-    image_url, _ = extract_remote_image_url(recipe)
-    return image_url
+    """Extract the first available remote image URL and Airtable field."""
+    return extract_remote_image_url(recipe)
 
 
 def _is_blocked_image_domain(image_url):
@@ -143,7 +142,7 @@ def filter_inaccessible_image_recipes(recipes):
     removed_recipes = []
 
     for recipe in recipes:
-        image_url = _get_image_url_from_recipe(recipe)
+        image_url, airtable_field = _get_image_url_from_recipe(recipe)
 
         if not image_url:
             accessible_recipes.append(recipe)
@@ -153,6 +152,7 @@ def filter_inaccessible_image_recipes(recipes):
             removed_recipes.append({
                 "title": recipe.get("title", "Untitled Recipe"),
                 "image_url": image_url,
+                "airtable_field": airtable_field,
                 "reason": "blocked_domain",
             })
             continue
@@ -196,6 +196,7 @@ def filter_inaccessible_image_recipes(recipes):
                 removed_recipes.append({
                     "title": recipe.get("title", "Untitled Recipe"),
                     "image_url": image_url,
+                    "airtable_field": airtable_field,
                     "reason": "fetch_error",
                     "error": str(exc_get),
                 })
@@ -288,12 +289,26 @@ def generate_recipe_article():
         # Extract sources
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
 
+        # Surface image hotlink information so downstream systems avoid re-hosting.
+        image_hotlinks = []
+        for recipe in top_recipes:
+            image_url, airtable_field = extract_remote_image_url(recipe)
+            if not image_url:
+                continue
+            image_hotlinks.append({
+                'title': recipe.get('title', 'Untitled Recipe'),
+                'image_url': image_url,
+                'airtable_field': airtable_field,
+                'hotlink': True,
+            })
+
         return jsonify({
             'article': article,
             'sources': sources,
             'recipe_count': len(top_recipes),
             'query': query,
             'removed_recipes': removed_recipes,
+            'image_hotlinks': image_hotlinks,
         })
         
     except Exception as e:
