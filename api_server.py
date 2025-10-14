@@ -17,6 +17,10 @@ import time
 import faiss
 from urllib.parse import urlparse
 
+from tools.generator import (
+    generate_article as build_structured_article,
+    generate_article_fallback,
+)
 from tools.image_utils import extract_remote_image_url
 from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
@@ -311,7 +315,13 @@ def _is_transient_image_fetch_error(error: requests.RequestException) -> bool:
 
 
 def filter_inaccessible_image_recipes(recipes):
-    """Remove recipes whose remote images cannot be reached reliably."""
+    """Remove recipes whose remote images cannot be reached reliably.
+
+    The validation is limited to ``HEAD`` requests so we never download image
+    binaries that could be stored accidentally by WordPress or other
+    downstream systems. Hosts that block ``HEAD`` are treated as accessible to
+    keep their hotlinked URLs intact.
+    """
     accessible_recipes = []
     removed_recipes = []
 
@@ -339,42 +349,27 @@ def filter_inaccessible_image_recipes(recipes):
             )
             response.raise_for_status()
         except requests.RequestException as exc:
-            if _is_transient_image_fetch_error(exc):
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+
+            if _is_transient_image_fetch_error(exc) or status_code in {400, 401, 403, 405, 406}:
                 print(
-                    "Transient image availability issue (HEAD)",
+                    "Non-fatal image availability issue (HEAD)",
                     recipe.get("title", "Untitled Recipe"),
                     image_url,
-                    getattr(getattr(exc, "response", None), "status_code", None),
+                    status_code,
                 )
                 accessible_recipes.append(recipe)
                 continue
 
-            try:
-                with WORDPRESS_PROXY_SESSION.get(
-                    image_url,
-                    stream=True,
-                    timeout=WORDPRESS_PROXY_TIMEOUT,
-                ) as upstream_response:
-                    upstream_response.raise_for_status()
-            except requests.RequestException as exc_get:
-                if _is_transient_image_fetch_error(exc_get):
-                    print(
-                        "Transient image availability issue (GET)",
-                        recipe.get("title", "Untitled Recipe"),
-                        image_url,
-                        getattr(getattr(exc_get, "response", None), "status_code", None),
-                    )
-                    accessible_recipes.append(recipe)
-                    continue
-
-                removed_recipes.append({
-                    "title": recipe.get("title", "Untitled Recipe"),
-                    "image_url": image_url,
-                    "airtable_field": airtable_field,
-                    "reason": "fetch_error",
-                    "error": str(exc_get),
-                })
-                continue
+            removed_recipes.append({
+                "title": recipe.get("title", "Untitled Recipe"),
+                "image_url": image_url,
+                "airtable_field": airtable_field,
+                "reason": "head_error",
+                "status_code": status_code,
+                "error": str(exc),
+            })
+            continue
 
         accessible_recipes.append(recipe)
 
@@ -424,70 +419,19 @@ def generate_embedding(text):
     return response.data[0].embedding
 
 def generate_article(query, recipes):
-    """Generate article using systematic approach."""
+    """Generate article using the structured generator with a deterministic fallback."""
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+
     try:
-        # Import the systematic generator
-        from tools.generator import generate_article as systematic_generate
-        
-        # Use the systematic approach
-        return systematic_generate(query, recipes)
-        
-    except Exception as e:
-        print(f"Error with systematic generation: {e}")
-        # Fallback to simple generation
+        return build_structured_article(query, recipes)
+    except Exception as exc:
+        print(f"Error with systematic generation: {exc}")
         return generate_article_simple(query, recipes)
 
+
 def generate_article_simple(query, recipes):
-    """Fallback simple article generation."""
-    try:
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        
-        # Prepare recipe context
-        recipe_context = ""
-        for i, recipe in enumerate(recipes[:5], 1):
-            recipe_context += f"\n{i}. {recipe.get('title', 'Untitled Recipe')}\n"
-            recipe_context += f"   Ingredients: {recipe.get('ingredients', 'N/A')}\n"
-            recipe_context += f"   Instructions: {recipe.get('instructions', 'N/A')}\n"
-            if recipe.get('url'):
-                recipe_context += f"   Source: {recipe['url']}\n"
-        
-        # Generate article
-        prompt = f"""You are a professional food writer. Create a comprehensive article about: {query}
-
-Use these recipes as inspiration and reference:
-
-{recipe_context}
-
-Write a complete article that includes:
-1. An engaging introduction
-2. The requested number of recipes with full ingredients and instructions
-3. Tips and variations
-4. A conclusion
-
-Make it professional, engaging, and practical for home cooks.
-
-IMPORTANT: Format the article using HTML tags instead of markdown:
-- Use <h2> for main headings
-- Use <h3> for recipe titles
-- Use <h4> for section headings like "Ingredients:" and "Instructions:"
-- Use <ul> and <li> for lists
-- Use <p> for paragraphs
-- Use <strong> for bold text
-- Use <em> for italic text
-
-Do NOT use markdown syntax like #, ##, ###, ####, or **."""
-
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"Error generating article: {e}")
-        return f"Error generating article: {str(e)}"
+    """Fallback simple article generation that preserves remote imagery."""
+    return generate_article_fallback(query, recipes)
 
 @app.route('/api/recipe-query', methods=['POST'])
 def generate_recipe_article():

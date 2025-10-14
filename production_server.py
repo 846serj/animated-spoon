@@ -16,6 +16,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib.parse import urlparse
 
+from tools.generator import (
+    generate_article as build_rich_article,
+    generate_article_fallback,
+)
 from tools.image_utils import extract_remote_image_url
 from urllib3.util import Retry
 
@@ -137,7 +141,14 @@ def _is_transient_image_fetch_error(error: requests.RequestException) -> bool:
 
 
 def filter_inaccessible_image_recipes(recipes):
-    """Remove recipes whose remote images cannot be reached reliably."""
+    """Remove recipes whose remote images cannot be reached reliably.
+
+    This check relies solely on lightweight ``HEAD`` requests so we avoid
+    downloading binary payloads that could be persisted by WordPress or other
+    upstream systems. Some hosts intentionally block ``HEAD`` requests; those
+    images are treated as accessible so we still surface their hotlinked URLs
+    rather than attempting a ``GET`` download.
+    """
     accessible_recipes = []
     removed_recipes = []
 
@@ -165,87 +176,41 @@ def filter_inaccessible_image_recipes(recipes):
             )
             response.raise_for_status()
         except requests.RequestException as exc:
-            if _is_transient_image_fetch_error(exc):
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+
+            if _is_transient_image_fetch_error(exc) or status_code in {400, 401, 403, 405, 406}:
                 print(
-                    "Transient image availability issue (HEAD)",
+                    "Non-fatal image availability issue (HEAD)",
                     recipe.get("title", "Untitled Recipe"),
                     image_url,
-                    getattr(getattr(exc, "response", None), "status_code", None),
+                    status_code,
                 )
                 accessible_recipes.append(recipe)
                 continue
 
-            try:
-                with WORDPRESS_PROXY_SESSION.get(
-                    image_url,
-                    stream=True,
-                    timeout=WORDPRESS_PROXY_TIMEOUT,
-                ) as upstream_response:
-                    upstream_response.raise_for_status()
-            except requests.RequestException as exc_get:
-                if _is_transient_image_fetch_error(exc_get):
-                    print(
-                        "Transient image availability issue (GET)",
-                        recipe.get("title", "Untitled Recipe"),
-                        image_url,
-                        getattr(getattr(exc_get, "response", None), "status_code", None),
-                    )
-                    accessible_recipes.append(recipe)
-                    continue
-
-                removed_recipes.append({
-                    "title": recipe.get("title", "Untitled Recipe"),
-                    "image_url": image_url,
-                    "airtable_field": airtable_field,
-                    "reason": "fetch_error",
-                    "error": str(exc_get),
-                })
-                continue
+            removed_recipes.append({
+                "title": recipe.get("title", "Untitled Recipe"),
+                "image_url": image_url,
+                "airtable_field": airtable_field,
+                "reason": "head_error",
+                "status_code": status_code,
+                "error": str(exc),
+            })
+            continue
 
         accessible_recipes.append(recipe)
 
     return accessible_recipes, removed_recipes
 
 def generate_article(query, recipes):
-    """Generate article from recipes."""
+    """Generate an HTML article while preserving original image hotlinks."""
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+
     try:
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        
-        # Prepare recipe context
-        recipe_context = ""
-        for i, recipe in enumerate(recipes[:5], 1):
-            recipe_context += f"\n{i}. {recipe.get('title', 'Untitled Recipe')}\n"
-            recipe_context += f"   Ingredients: {recipe.get('ingredients', 'N/A')}\n"
-            recipe_context += f"   Instructions: {recipe.get('instructions', 'N/A')}\n"
-            if recipe.get('url'):
-                recipe_context += f"   Source: {recipe['url']}\n"
-        
-        # Generate article
-        prompt = f"""You are a professional food writer. Create a comprehensive article about: {query}
-
-Use these recipes as inspiration and reference:
-
-{recipe_context}
-
-Write a complete article that includes:
-1. An engaging introduction
-2. The requested number of recipes with full ingredients and instructions
-3. Tips and variations
-4. A conclusion
-
-Make it professional, engaging, and practical for home cooks."""
-
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"Error generating article: {e}")
-        return f"Error generating article: {str(e)}"
+        return build_rich_article(query, recipes)
+    except Exception as exc:
+        print(f"Error generating article via LLM pipeline: {exc}")
+        return generate_article_fallback(query, recipes)
 
 @app.route('/api/recipe-query', methods=['POST'])
 def generate_recipe_article():

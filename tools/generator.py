@@ -16,7 +16,7 @@ from .prompt_templates import (
 )
 
 
-def _build_image_figure(
+def build_image_figure(
     title: str,
     image_url: Optional[str],
     airtable_field: Optional[str],
@@ -147,7 +147,7 @@ def generate_recipe_sections(recipes_list, context):
             section = f"<h2>{recipe['title']}</h2>"
             image_url, airtable_field = extract_remote_image_url(recipe)
 
-            section += _build_image_figure(recipe['title'], image_url, airtable_field)
+            section += build_image_figure(recipe['title'], image_url, airtable_field)
             
             # Ensure content is properly formatted as HTML paragraph
             content = response.choices[0].message.content.strip()
@@ -168,7 +168,7 @@ def generate_recipe_sections(recipes_list, context):
 
             fallback_section = f"<h2>{recipe['title']}</h2>"
 
-            fallback_section += _build_image_figure(
+            fallback_section += build_image_figure(
                 recipe['title'],
                 image_url,
                 airtable_field,
@@ -189,6 +189,84 @@ def generate_recipe_sections(recipes_list, context):
             sections.append(fallback_section)
     
     return "\n\n".join(sections)
+
+
+def _format_text_block(text: Optional[str]) -> str:
+    """Format a blob of text as either a paragraph or bulleted list."""
+    if not text:
+        return ""
+
+    normalised = text.replace("\r", "\n")
+    lines = [line.strip(" \t-•") for line in normalised.split("\n") if line.strip()]
+
+    if not lines:
+        return ""
+
+    if len(lines) == 1:
+        return f"<p>{lines[0]}</p>"
+
+    return "<ul>" + "".join(f"<li>{line}</li>" for line in lines) + "</ul>"
+
+
+def generate_article_fallback(query: str, recipes_list):
+    """Render a deterministic HTML article that preserves remote imagery."""
+    if not recipes_list:
+        return "<p>No recipes were available for this request.</p>"
+
+    recipes_list = _deduplicate_recipes(recipes_list)
+
+    safe_query = (query or "").strip()
+    if safe_query:
+        heading = f"<h1>{safe_query.title()}</h1>"
+        intro = (
+            f"<p>Enjoy a curated selection of recipes inspired by {safe_query}. "
+            "Each dish keeps its original photography so you always know what "
+            "to expect when cooking.</p>"
+        )
+    else:
+        heading = "<h1>Featured Recipes</h1>"
+        intro = (
+            "<p>Explore a collection of recipes discovered in our Airtable "
+            "archive. Every image is hotlinked from the original source so "
+            "credit stays intact.</p>"
+        )
+
+    sections = []
+    for recipe in recipes_list:
+        title = recipe.get("title", "Untitled Recipe")
+        section_parts = [f"<h2>{title}</h2>"]
+
+        image_url, airtable_field = extract_remote_image_url(recipe)
+        section_parts.append(build_image_figure(title, image_url, airtable_field))
+
+        description = recipe.get("description")
+        if description:
+            section_parts.append(f"<p>{description.strip()}</p>")
+
+        ingredients_block = _format_text_block(recipe.get("ingredients"))
+        if ingredients_block:
+            section_parts.append("<h3>Ingredients</h3>")
+            section_parts.append(ingredients_block)
+
+        instructions_block = _format_text_block(recipe.get("instructions"))
+        if instructions_block:
+            section_parts.append("<h3>Instructions</h3>")
+            section_parts.append(instructions_block)
+
+        if recipe.get("url"):
+            section_parts.append(
+                f'<p><a href="{recipe["url"]}">View the original recipe</a></p>'
+            )
+
+        sections.append("\n".join(part for part in section_parts if part))
+
+    outro = (
+        "<p>These recipes were gathered directly from our Airtable library. "
+        "Images remain hosted at their original locations so proper credit "
+        "and context are always preserved.</p>"
+    )
+
+    return "\n\n".join([heading, intro, "\n\n".join(sections), outro])
 
 def generate_cooking_tips(context):
     """Generate cooking tips section."""
