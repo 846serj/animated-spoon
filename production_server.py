@@ -12,18 +12,17 @@ import faiss
 import numpy as np
 import openai
 import re
-from urllib.parse import urlparse
 
-from tools.image_utils import (
-    build_remote_image_figure,
-    collect_image_hotlinks,
-    extract_remote_image_url,
-)
+from tools.image_utils import build_remote_image_figure, extract_remote_image_url
 from tools.generator import generate_article as structured_generate_article
+from tools.drafting import (
+    DEFAULT_BLOCKED_IMAGE_DOMAINS,
+    prepare_article_payload,
+)
 
 app = Flask(__name__)
 
-BLOCKED_IMAGE_DOMAINS = {"smushcdn.com"}
+BLOCKED_IMAGE_DOMAINS = set(DEFAULT_BLOCKED_IMAGE_DOMAINS)
 
 # Global variables for pre-computed data
 recipes = None
@@ -81,61 +80,6 @@ def search_recipes(query, k=5):
         print(f"Error searching recipes: {e}")
         return []
 
-
-def _get_image_url_from_recipe(recipe):
-    """Extract the first available remote image URL and Airtable field."""
-    return extract_remote_image_url(recipe)
-
-
-def _is_blocked_image_domain(image_url):
-    """Return True if the image URL belongs to a blocked domain."""
-    try:
-        hostname = urlparse(image_url).hostname or ""
-    except ValueError:
-        return False
-
-    hostname = hostname.lower()
-    return any(hostname.endswith(domain) for domain in BLOCKED_IMAGE_DOMAINS)
-
-
-def filter_inaccessible_image_recipes(recipes):
-    """Remove recipes whose remote images cannot be hotlinked safely."""
-    accessible_recipes = []
-    removed_recipes = []
-
-    for recipe in recipes:
-        image_url, airtable_field = _get_image_url_from_recipe(recipe)
-
-        if not image_url:
-            accessible_recipes.append(recipe)
-            continue
-
-        if _is_blocked_image_domain(image_url):
-            removed_recipes.append({
-                "title": recipe.get("title", "Untitled Recipe"),
-                "image_url": image_url,
-                "airtable_field": airtable_field,
-                "reason": "blocked_domain",
-            })
-            continue
-
-        try:
-            parsed = urlparse(image_url)
-        except ValueError:
-            parsed = None
-
-        if not parsed or parsed.scheme not in ("http", "https") or not parsed.netloc:
-            removed_recipes.append({
-                "title": recipe.get("title", "Untitled Recipe"),
-                "image_url": image_url,
-                "airtable_field": airtable_field,
-                "reason": "invalid_url",
-            })
-            continue
-
-        accessible_recipes.append(recipe)
-
-    return accessible_recipes, removed_recipes
 
 def generate_article(query, recipes):
     """Generate article from recipes while preserving Airtable image links."""
@@ -197,7 +141,12 @@ def generate_recipe_article():
         if not top_recipes:
             return jsonify({'error': 'No recipes found'}), 404
 
-        filtered_recipes, removed_recipes = filter_inaccessible_image_recipes(top_recipes)
+        payload, removed_recipes = prepare_article_payload(
+            query,
+            top_recipes,
+            blocked_domains=BLOCKED_IMAGE_DOMAINS,
+            article_generator=generate_article,
+        )
 
         if removed_recipes:
             print(
@@ -205,31 +154,13 @@ def generate_recipe_article():
                 [(r.get('title'), r.get('image_url')) for r in removed_recipes]
             )
 
-        if not filtered_recipes:
+        if not payload:
             return jsonify({
                 'error': 'No recipes with accessible images found',
                 'removed_recipes': removed_recipes,
             }), 502
 
-        top_recipes = filtered_recipes
-
-        # Generate article
-        article = generate_article(query, top_recipes)
-
-        # Extract sources
-        sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
-
-        # Surface image hotlink information so downstream systems avoid re-hosting.
-        image_hotlinks = collect_image_hotlinks(top_recipes)
-
-        return jsonify({
-            'article': article,
-            'sources': sources,
-            'recipe_count': len(top_recipes),
-            'query': query,
-            'removed_recipes': removed_recipes,
-            'image_hotlinks': image_hotlinks,
-        })
+        return jsonify(payload)
         
     except Exception as e:
         print(f"Error generating recipe article: {e}")
