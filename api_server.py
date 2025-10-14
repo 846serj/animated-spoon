@@ -17,7 +17,7 @@ import time
 import faiss
 from urllib.parse import urlparse
 
-from tools.image_utils import extract_remote_image_url
+from tools.image_utils import build_remote_image_figure, extract_remote_image_url
 from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
 from urllib3.util import Retry
@@ -438,56 +438,57 @@ def generate_article(query, recipes):
         return generate_article_simple(query, recipes)
 
 def generate_article_simple(query, recipes):
-    """Fallback simple article generation."""
-    try:
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        
-        # Prepare recipe context
-        recipe_context = ""
-        for i, recipe in enumerate(recipes[:5], 1):
-            recipe_context += f"\n{i}. {recipe.get('title', 'Untitled Recipe')}\n"
-            recipe_context += f"   Ingredients: {recipe.get('ingredients', 'N/A')}\n"
-            recipe_context += f"   Instructions: {recipe.get('instructions', 'N/A')}\n"
-            if recipe.get('url'):
-                recipe_context += f"   Source: {recipe['url']}\n"
-        
-        # Generate article
-        prompt = f"""You are a professional food writer. Create a comprehensive article about: {query}
+    """Fallback simple article generation that preserves Airtable imagery."""
+    if not recipes:
+        heading = query or "Recipes"
+        return f"<h1>{heading}</h1><p>No recipes found.</p>"
 
-Use these recipes as inspiration and reference:
+    sections = []
+    heading = query.strip() if isinstance(query, str) else "Recipe Collection"
+    if not heading:
+        heading = "Recipe Collection"
+    sections.append(f"<h1>{heading}</h1>")
 
-{recipe_context}
+    intro_clause = heading.lower()
+    sections.append(
+        f"<p>We pulled {len(recipes)} recipes directly from our Airtable source to help you explore {intro_clause}.</p>"
+    )
 
-Write a complete article that includes:
-1. An engaging introduction
-2. The requested number of recipes with full ingredients and instructions
-3. Tips and variations
-4. A conclusion
+    for recipe in recipes:
+        title = (recipe.get('title') or 'Untitled Recipe').strip()
+        section_parts = [f"<h2>{title}</h2>"]
 
-Make it professional, engaging, and practical for home cooks.
+        image_url, airtable_field = extract_remote_image_url(recipe)
+        figure = build_remote_image_figure(title, image_url, airtable_field)
+        if figure:
+            section_parts.append(figure)
 
-IMPORTANT: Format the article using HTML tags instead of markdown:
-- Use <h2> for main headings
-- Use <h3> for recipe titles
-- Use <h4> for section headings like "Ingredients:" and "Instructions:"
-- Use <ul> and <li> for lists
-- Use <p> for paragraphs
-- Use <strong> for bold text
-- Use <em> for italic text
+        description = (recipe.get('description') or '').strip()
+        if description:
+            section_parts.append(f"<p>{description}</p>")
 
-Do NOT use markdown syntax like #, ##, ###, ####, or **."""
+        ingredients = (recipe.get('ingredients') or '').strip()
+        if ingredients:
+            section_parts.append("<h3>Ingredients</h3>")
+            section_parts.append(f"<p>{ingredients}</p>")
 
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"Error generating article: {e}")
-        return f"Error generating article: {str(e)}"
+        instructions = (recipe.get('instructions') or '').strip()
+        if instructions:
+            section_parts.append("<h3>Instructions</h3>")
+            section_parts.append(f"<p>{instructions}</p>")
+
+        source_url = (recipe.get('url') or '').strip()
+        if source_url:
+            section_parts.append(f'<p><a href="{source_url}">View Full Recipe</a></p>')
+
+        sections.append("\n".join(part for part in section_parts if part))
+
+    sections.append(
+        "<h2>Serving Suggestions</h2>\n"
+        "<p>Mix and match these dishes, and adjust seasonings to make each recipe your own.</p>"
+    )
+
+    return "\n\n".join(section for section in sections if section)
 
 @app.route('/api/recipe-query', methods=['POST'])
 def generate_recipe_article():

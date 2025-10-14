@@ -8,7 +8,7 @@ from typing import Dict, Iterable, List, Optional, Sequence
 import openai
 
 from config import *
-from .image_utils import build_image_credit, extract_remote_image_url
+from .image_utils import build_remote_image_figure, extract_remote_image_url
 from .prompt_templates import (
     CONCLUSION_TEMPLATE,
     COOKING_TIPS_TEMPLATE,
@@ -20,32 +20,6 @@ from .prompt_templates import (
 SYSTEM_PROMPT = (
     "You are a professional food writer who creates engaging, appetizing content."
 )
-
-
-def _build_image_figure(
-    title: str,
-    image_url: Optional[str],
-    airtable_field: Optional[str],
-) -> str:
-    """Return a ready-to-use HTML figure that hotlinks the remote recipe image."""
-    if not image_url:
-        return ""
-
-    caption = build_image_credit(image_url)
-    source_field = airtable_field or "unknown"
-    return (
-        '\n<figure style="margin: 10px 0; text-align: center;" '
-        'data-image-hosting="remote" '
-        'data-image-hotlink="true" '
-        f'data-image-source-field="{source_field}">'
-        f'\n<img src="{image_url}" alt="{title}" '
-        'width="1280" height="720" '
-        'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;" '
-        'loading="lazy" '
-        f'data-original-image-url="{image_url}">'
-        f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
-        '\n</figure>'
-    )
 
 
 def _deduplicate_recipes(recipes_list: Sequence[Dict]) -> List[Dict]:
@@ -172,7 +146,7 @@ class RecipeArticleBuilder:
         )
 
         image_url, airtable_field = extract_remote_image_url(recipe)
-        figure = _build_image_figure(title, image_url, airtable_field)
+        figure = build_remote_image_figure(title, image_url, airtable_field)
 
         if response:
             body = _ensure_paragraphs(response)

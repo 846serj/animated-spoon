@@ -16,7 +16,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib.parse import urlparse
 
-from tools.image_utils import extract_remote_image_url
+from tools.image_utils import build_remote_image_figure, extract_remote_image_url
 from tools.generator import generate_article as structured_generate_article
 from urllib3.util import Retry
 
@@ -229,18 +229,7 @@ def _fallback_article(query, recipes):
 
         image_url, airtable_field = extract_remote_image_url(recipe)
         if image_url:
-            section.append(
-                '\n'.join(
-                    [
-                        '<figure style="margin: 10px 0; text-align: center;" '
-                        'data-image-hosting="remote" data-image-hotlink="true" '
-                        f'data-image-source-field="{airtable_field or "unknown"}">',
-                        f'<img src="{image_url}" alt="{title}" style="max-width: 100%; height: auto;" loading="lazy" data-original-image-url="{image_url}">',
-                        f'<figcaption style="font-size: 0.9em; color: #666; font-style: italic;">{image_url}</figcaption>',
-                        '</figure>',
-                    ]
-                )
-            )
+            section.append(build_remote_image_figure(title, image_url, airtable_field))
 
         ingredients = recipe.get('ingredients')
         if ingredients:
