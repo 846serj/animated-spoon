@@ -1,34 +1,19 @@
-"""Recipe article generation that preserves original Airtable image links.
+"""Simplified recipe article generator that mirrors the Sheets drafting flow.
 
-Preparing images for publishing now follows a pure hotlink workflow:
-
-1. `extract_remote_image_url` identifies the Airtable field that already holds
-   a publicly reachable asset and returns the untouched URL.
-2. We never download or mirror that asset. The URL is passed straight through
-   to HTML generation so WordPress (or any CMS) can embed it via `<img src>`
-   without touching the media library.
-3. `build_remote_image_figure` wraps the hotlinked URL in a `<figure>` element
-   and annotates it with provenance metadata for easy auditing.
-4. If a recipe has no usable URL we simply omit the figure while still
-   returning the textual section, preventing broken placeholders.
-5. The API layer exposes `image_hotlinks` metadata so automation scripts can
-   set featured images or galleries using the same remote links.
+Images are still hotlinked directly from Airtable via
+``extract_remote_image_url`` so downstream uploads can keep the same
+references without touching a media library.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import html
 from typing import Dict, Iterable, List, Optional, Sequence
 
 import openai
 
 from config import *
 from .image_utils import build_remote_image_figure, extract_remote_image_url
-from .prompt_templates import (
-    INTRO_TEMPLATE,
-    RECIPE_SECTION_TEMPLATE,
-    extract_context,
-)
 
 SYSTEM_PROMPT = (
     "You are a professional food writer who creates engaging, appetizing content."
@@ -46,10 +31,7 @@ def _deduplicate_recipes(recipes_list: Sequence[Dict]) -> List[Dict]:
         if not identifier:
             title = (recipe.get("title") or "").strip().lower()
             url = (recipe.get("url") or "").strip().lower()
-            if title or url:
-                identifier = (title, url)
-            else:
-                identifier = id(recipe)
+            identifier = (title, url) if (title or url) else id(recipe)
 
         if identifier in seen_identifiers:
             continue
@@ -73,135 +55,107 @@ def _ensure_paragraphs(content: str) -> str:
     if not paragraphs:
         return ""
 
-    return "\n\n".join(f"<p>{paragraph}</p>" for paragraph in paragraphs)
+    return "\n\n".join(f"<p>{html.escape(paragraph)}</p>" for paragraph in paragraphs)
 
 
-def _truncate_words(text: str, limit: int = 100) -> str:
-    words = text.split()
-    if len(words) <= limit:
-        return text
-    return " ".join(words[:limit]) + "..."
-
-
-@dataclass
-class RecipeArticleBuilder:
-    """Coordinator that assembles article sections while preserving remote images."""
-
-    query: str
-    recipes: Sequence[Dict]
-
-    def __post_init__(self) -> None:
-        self.recipes = _deduplicate_recipes(self.recipes)
-        self.context = extract_context(self.query)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-    def build(self) -> str:
-        if not self.recipes:
-            return "No recipes found."
-
-        sections: List[str] = []
-
-        intro = self._build_intro()
-        if intro:
-            sections.append(intro)
-
-        for recipe in self.recipes:
-            section_html = self._build_recipe_section(recipe)
-            if section_html:
-                sections.append(section_html)
-
-        return "\n\n".join(part.strip() for part in sections if part and part.strip())
-
-    # ------------------------------------------------------------------
-    # Section builders
-    # ------------------------------------------------------------------
-    def _build_intro(self) -> str:
-        content = self._chat_template(
-            INTRO_TEMPLATE.format(
-                query=self.query,
-                cuisine=self.context["cuisine"],
-                number=self.context["number"],
-            ),
-            max_tokens=400,
+def _call_model(prompt: str, *, max_tokens: int) -> Optional[str]:
+    try:
+        response = openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=max_tokens,
+            temperature=0.7,
         )
+    except Exception as exc:
+        print(f"Error contacting language model: {exc}")
+        return None
 
-        if not content:
-            return (
-                f"<p>Explore {self.context['number']} {self.context['cuisine']} recipes "
-                "that bring the spirit of the request to your kitchen.</p>"
-            )
+    if not response.choices:
+        return None
 
-        return _ensure_paragraphs(content)
+    return (response.choices[0].message.content or "").strip()
 
-    def _build_recipe_section(self, recipe: Dict) -> str:
-        title = recipe.get("title") or "Untitled Recipe"
-        description = recipe.get("description") or (
-            f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}"
+
+def _format_intro(headline: str, recipe_count: int) -> str:
+    prompt = (
+        "Write an engaging introduction (4-5 sentences) for a recipe roundup "
+        f"titled: \"{headline}\". Reference that it features {recipe_count} recipes "
+        "and use warm, inviting language."
+    )
+
+    response = _call_model(prompt, max_tokens=320) or ""
+    intro = _ensure_paragraphs(response)
+    if intro:
+        return intro
+
+    return (
+        f"<p>Welcome to {html.escape(headline)}, a hand-picked lineup of "
+        f"{recipe_count} dishes our team can’t stop cooking.</p>"
+    )
+
+
+def _rewrite_description(description: str) -> str:
+    prompt = (
+        "Rewrite this recipe description to be warm, clear, and inviting. "
+        "Limit to 3-4 sentences.\n"
+        f'"{description}"'
+    )
+
+    response = _call_model(prompt, max_tokens=260) or ""
+    rewritten = _ensure_paragraphs(response)
+    if rewritten:
+        return rewritten
+
+    safe_description = html.escape(description.strip()) if description else ""
+    if not safe_description:
+        safe_description = (
+            "This reader favorite brings together pantry staples for a reliable weeknight win."
         )
-
-        response = self._chat_template(
-            RECIPE_SECTION_TEMPLATE.format(
-                cuisine=self.context["cuisine"],
-                title=title,
-                description=description,
-            ),
-            max_tokens=380,
-        )
-
-        image_url, airtable_field = extract_remote_image_url(recipe)
-        figure = build_remote_image_figure(title, image_url, airtable_field)
-
-        if response:
-            body = _ensure_paragraphs(response)
-        else:
-            fallback_text = f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}".strip()
-            fallback_text = _truncate_words(fallback_text)
-            if not fallback_text:
-                fallback_text = "This recipe is a reader favourite straight from our Airtable collection."
-            body = f"<p>{fallback_text}</p>"
-
-        parts = [f"<h2>{title}</h2>"]
-        if figure:
-            parts.append(figure)
-        parts.append(body)
-
-        source_url = recipe.get("url")
-        if source_url:
-            parts.append(f'<p><a href="{source_url}">View Full Recipe</a></p>')
-
-        return "\n".join(part for part in parts if part)
-
-    # ------------------------------------------------------------------
-    # LLM helper
-    # ------------------------------------------------------------------
-    def _chat_template(self, user_prompt: str, *, max_tokens: int) -> Optional[str]:
-        try:
-            response = openai.chat.completions.create(
-                model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=max_tokens,
-                temperature=0.7,
-            )
-        except Exception as exc:
-            print(f"Error contacting language model: {exc}")
-            return None
-
-        if not response.choices:
-            return None
-
-        content = response.choices[0].message.content or ""
-        return content.strip()
+    return f"<p>{safe_description}</p>"
 
 
 def generate_article(query: str, recipes_list: Sequence[Dict]) -> str:
-    """Generate a complete article that hotlinks Airtable-hosted imagery."""
-    builder = RecipeArticleBuilder(query, recipes_list)
-    return builder.build()
+    """Generate a roundup-style article with hotlinked recipe imagery."""
+    recipes = _deduplicate_recipes(recipes_list)
+    if not recipes:
+        return "<p>No recipes found.</p>"
+
+    headline = (query or "Recipe Roundup").strip() or "Recipe Roundup"
+    safe_headline = html.escape(headline)
+
+    sections: List[str] = [f"<h1>{safe_headline}</h1>"]
+    sections.append(_format_intro(headline, len(recipes)))
+
+    for recipe in recipes:
+        title = (recipe.get("title") or "Untitled Recipe").strip() or "Untitled Recipe"
+        safe_title = html.escape(title)
+        description = (
+            recipe.get("description")
+            or f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}"
+        ).strip()
+
+        body_html = _rewrite_description(description)
+
+        image_url, airtable_field = extract_remote_image_url(recipe)
+        figure_html = build_remote_image_figure(title, image_url, airtable_field)
+
+        section_parts = [f"<h2>{safe_title}</h2>"]
+        if figure_html:
+            section_parts.append(figure_html)
+        section_parts.append(body_html)
+
+        source_url = (recipe.get("url") or "").strip()
+        if source_url:
+            section_parts.append(
+                f'<p><a href="{html.escape(source_url)}" target="_blank">Get the recipe.</a></p>'
+            )
+
+        sections.append("\n".join(part for part in section_parts if part))
+
+    return "\n\n".join(part.strip() for part in sections if part)
 
 
 # Legacy function for backward compatibility
