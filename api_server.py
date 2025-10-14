@@ -553,10 +553,13 @@ def _validate_remote_image_url(image_url):
     return True
 
 
-@app.route('/api/wordpress/proxy', methods=['GET'])
-def proxy_wordpress_asset():
-    """Redirect to the original image to keep it hosted remotely."""
-    image_url = request.args.get('url', '').strip()
+
+
+@app.route('/api/wordpress/validate-image', methods=['POST'])
+def validate_wordpress_image():
+    """Validate that an image URL is accessible for WordPress hotlinking."""
+    data = request.get_json()
+    image_url = data.get('url', '').strip() if data else ''
 
     if not image_url:
         return jsonify({'error': 'Missing url parameter'}), 400
@@ -564,7 +567,67 @@ def proxy_wordpress_asset():
     if not _validate_remote_image_url(image_url):
         return jsonify({'error': 'Invalid or blocked image URL'}), 400
 
-    return redirect(image_url, code=302)
+    # Test if the image is actually accessible
+    try:
+        import requests
+        response = requests.head(image_url, timeout=10, allow_redirects=True)
+        if response.status_code == 200:
+            return jsonify({
+                'valid': True,
+                'url': image_url,
+                'content_type': response.headers.get('content-type', ''),
+                'content_length': response.headers.get('content-length', '')
+            })
+        else:
+            return jsonify({'valid': False, 'error': f'Image not accessible (status: {response.status_code})'})
+    except Exception as e:
+        return jsonify({'valid': False, 'error': f'Image validation failed: {str(e)}'})
+
+
+@app.route('/api/wordpress/hotlink-content', methods=['POST'])
+def process_wordpress_hotlink_content():
+    """Process content to ensure all images use hotlinking instead of downloads."""
+    data = request.get_json()
+    content = data.get('content', '') if data else ''
+
+    if not content:
+        return jsonify({'error': 'Missing content parameter'}), 400
+
+    # Process content to ensure hotlinking
+    processed_content = _process_content_for_hotlinking(content)
+    
+    # Extract all image URLs for validation
+    import re
+    img_pattern = r'<img[^>]*src="([^"]*)"[^>]*>'
+    image_urls = re.findall(img_pattern, processed_content)
+    
+    return jsonify({
+        'processed_content': processed_content,
+        'image_urls': image_urls,
+        'hotlink_count': len(image_urls)
+    })
+
+
+def _process_content_for_hotlinking(content: str) -> str:
+    """Process HTML content to ensure all images use hotlinking."""
+    import re
+    
+    # Find all img tags and ensure they use external URLs
+    def replace_img_src(match):
+        img_tag = match.group(0)
+        src_match = re.search(r'src="([^"]*)"', img_tag)
+        if src_match:
+            original_url = src_match.group(1)
+            # Add data attributes to indicate this is a hotlinked image
+            if 'data-image-hotlink' not in img_tag:
+                img_tag = img_tag.replace('<img', '<img data-image-hotlink="true" data-external-source="airtable"')
+            return img_tag
+        return img_tag
+    
+    # Replace img tags to ensure they're properly formatted for hotlinking
+    processed_content = re.sub(r'<img[^>]*>', replace_img_src, content)
+    
+    return processed_content
 
 @app.route('/', methods=['GET'])
 def root():
