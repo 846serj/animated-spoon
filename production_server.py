@@ -17,6 +17,7 @@ from requests.adapters import HTTPAdapter
 from urllib.parse import urlparse
 
 from tools.image_utils import extract_remote_image_url
+from tools.generator import generate_article as structured_generate_article
 from urllib3.util import Retry
 
 app = Flask(__name__)
@@ -207,45 +208,55 @@ def filter_inaccessible_image_recipes(recipes):
     return accessible_recipes, removed_recipes
 
 def generate_article(query, recipes):
-    """Generate article from recipes."""
+    """Generate article from recipes while preserving Airtable image links."""
     try:
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        
-        # Prepare recipe context
-        recipe_context = ""
-        for i, recipe in enumerate(recipes[:5], 1):
-            recipe_context += f"\n{i}. {recipe.get('title', 'Untitled Recipe')}\n"
-            recipe_context += f"   Ingredients: {recipe.get('ingredients', 'N/A')}\n"
-            recipe_context += f"   Instructions: {recipe.get('instructions', 'N/A')}\n"
-            if recipe.get('url'):
-                recipe_context += f"   Source: {recipe['url']}\n"
-        
-        # Generate article
-        prompt = f"""You are a professional food writer. Create a comprehensive article about: {query}
-
-Use these recipes as inspiration and reference:
-
-{recipe_context}
-
-Write a complete article that includes:
-1. An engaging introduction
-2. The requested number of recipes with full ingredients and instructions
-3. Tips and variations
-4. A conclusion
-
-Make it professional, engaging, and practical for home cooks."""
-
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content
+        return structured_generate_article(query, recipes)
     except Exception as e:
-        print(f"Error generating article: {e}")
-        return f"Error generating article: {str(e)}"
+        print(f"Error generating structured article: {e}")
+        return _fallback_article(query, recipes)
+
+
+def _fallback_article(query, recipes):
+    """Fallback article that still hotlinks original imagery."""
+    if not recipes:
+        return f"<h1>{query}</h1><p>No recipes found.</p>"
+
+    sections = [f"<h1>{query}</h1>"]
+
+    for recipe in recipes:
+        title = recipe.get('title', 'Untitled Recipe')
+        section = [f"<h2>{title}</h2>"]
+
+        image_url, airtable_field = extract_remote_image_url(recipe)
+        if image_url:
+            section.append(
+                '\n'.join(
+                    [
+                        '<figure style="margin: 10px 0; text-align: center;" '
+                        'data-image-hosting="remote" data-image-hotlink="true" '
+                        f'data-image-source-field="{airtable_field or "unknown"}">',
+                        f'<img src="{image_url}" alt="{title}" style="max-width: 100%; height: auto;" loading="lazy" data-original-image-url="{image_url}">',
+                        f'<figcaption style="font-size: 0.9em; color: #666; font-style: italic;">{image_url}</figcaption>',
+                        '</figure>',
+                    ]
+                )
+            )
+
+        ingredients = recipe.get('ingredients')
+        if ingredients:
+            section.append(f"<h3>Ingredients</h3>\n<p>{ingredients}</p>")
+
+        instructions = recipe.get('instructions')
+        if instructions:
+            section.append(f"<h3>Instructions</h3>\n<p>{instructions}</p>")
+
+        source_url = recipe.get('url')
+        if source_url:
+            section.append(f'<p><a href="{source_url}">View Full Recipe</a></p>')
+
+        sections.append('\n'.join(section))
+
+    return '\n\n'.join(sections)
 
 @app.route('/api/recipe-query', methods=['POST'])
 def generate_recipe_article():

@@ -1,18 +1,24 @@
-"""
-Enhanced LLM-based content generation for recipes with multi-section article structure.
-"""
+"""Recipe article generation that preserves original Airtable image links."""
 
-from typing import Optional
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional, Sequence
 
 import openai
+
 from config import *
 from .image_utils import build_image_credit, extract_remote_image_url
 from .prompt_templates import (
-    extract_context,
+    CONCLUSION_TEMPLATE,
+    COOKING_TIPS_TEMPLATE,
     INTRO_TEMPLATE,
     RECIPE_SECTION_TEMPLATE,
-    COOKING_TIPS_TEMPLATE,
-    CONCLUSION_TEMPLATE
+    extract_context,
+)
+
+SYSTEM_PROMPT = (
+    "You are a professional food writer who creates engaging, appetizing content."
 )
 
 
@@ -41,9 +47,10 @@ def _build_image_figure(
         '\n</figure>'
     )
 
-def _deduplicate_recipes(recipes_list):
+
+def _deduplicate_recipes(recipes_list: Sequence[Dict]) -> List[Dict]:
     """Remove duplicate recipe entries while preserving order."""
-    unique_recipes = []
+    unique_recipes: List[Dict] = []
     seen_identifiers = set()
 
     for recipe in recipes_list:
@@ -66,183 +73,202 @@ def _deduplicate_recipes(recipes_list):
     return unique_recipes
 
 
+def _ensure_paragraphs(content: str) -> str:
+    """Wrap plain text content in HTML paragraphs if needed."""
+    if not content:
+        return ""
 
-def generate_article(query, recipes_list):
-    """Generate a complete multi-section article."""
-    if not recipes_list:
-        return "No recipes found."
+    stripped = content.strip()
+    if stripped.startswith("<p>") or stripped.startswith("<h2>"):
+        return stripped
 
-    # Prevent duplicate recipes from appearing in the same article
-    unique_recipes = _deduplicate_recipes(recipes_list)
-    if len(unique_recipes) < len(recipes_list):
-        print(
-            f"Removed {len(recipes_list) - len(unique_recipes)} duplicate "
-            "recipe(s) before article generation."
+    paragraphs = [p.strip() for p in stripped.split("\n\n") if p.strip()]
+    if not paragraphs:
+        return ""
+
+    return "\n\n".join(f"<p>{paragraph}</p>" for paragraph in paragraphs)
+
+
+def _truncate_words(text: str, limit: int = 100) -> str:
+    words = text.split()
+    if len(words) <= limit:
+        return text
+    return " ".join(words[:limit]) + "..."
+
+
+@dataclass
+class RecipeArticleBuilder:
+    """Coordinator that assembles article sections while preserving remote images."""
+
+    query: str
+    recipes: Sequence[Dict]
+
+    def __post_init__(self) -> None:
+        self.recipes = _deduplicate_recipes(self.recipes)
+        self.context = extract_context(self.query)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def build(self) -> str:
+        if not self.recipes:
+            return "No recipes found."
+
+        sections: List[str] = []
+
+        intro = self._build_intro()
+        if intro:
+            sections.append(intro)
+
+        for recipe in self.recipes:
+            section_html = self._build_recipe_section(recipe)
+            if section_html:
+                sections.append(section_html)
+
+        tips = self._build_cooking_tips()
+        if tips:
+            sections.append(tips)
+
+        conclusion = self._build_conclusion()
+        if conclusion:
+            sections.append(conclusion)
+
+        return "\n\n".join(part.strip() for part in sections if part and part.strip())
+
+    # ------------------------------------------------------------------
+    # Section builders
+    # ------------------------------------------------------------------
+    def _build_intro(self) -> str:
+        content = self._chat_template(
+            INTRO_TEMPLATE.format(
+                query=self.query,
+                cuisine=self.context["cuisine"],
+                number=self.context["number"],
+            ),
+            max_tokens=400,
         )
-    recipes_list = unique_recipes
 
-    # Extract context
-    context = extract_context(query)
-    
-    # Generate each section
-    intro = generate_intro(query, context)
-    recipe_sections = generate_recipe_sections(recipes_list, context)
+        if not content:
+            return (
+                f"<p>Explore {self.context['number']} {self.context['cuisine']} recipes "
+                "that bring the spirit of the request to your kitchen.</p>"
+            )
 
-    # Combine into complete article without a conclusion section
-    article_parts = [intro.strip(), recipe_sections.strip()]
-    return "\n\n".join(part for part in article_parts if part)
+        return _ensure_paragraphs(content)
 
-def generate_intro(query, context):
-    """Generate article introduction."""
-    try:
-        response = openai.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a professional food writer who creates engaging, appetizing content."},
-                {"role": "user", "content": INTRO_TEMPLATE.format(
-                    query=query,
-                    cuisine=context['cuisine'],
-                    number=context['number']
-                )}
-            ],
-            max_tokens=500,
-            temperature=0.7
+    def _build_recipe_section(self, recipe: Dict) -> str:
+        title = recipe.get("title") or "Untitled Recipe"
+        description = recipe.get("description") or (
+            f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}"
         )
-        content = response.choices[0].message.content.strip()
-        
-        # Ensure content is properly formatted as HTML paragraphs
-        if not content.startswith('<p>') and not content.startswith('<h2>'):
-            # Split into paragraphs and wrap each in <p> tags
-            paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
-            if paragraphs:
-                content = '\n\n'.join([f'<p>{p}</p>' for p in paragraphs])
-            else:
-                content = f'<p>{content}</p>'
-        
+
+        response = self._chat_template(
+            RECIPE_SECTION_TEMPLATE.format(
+                cuisine=self.context["cuisine"],
+                title=title,
+                description=description,
+            ),
+            max_tokens=380,
+        )
+
+        image_url, airtable_field = extract_remote_image_url(recipe)
+        figure = _build_image_figure(title, image_url, airtable_field)
+
+        if response:
+            body = _ensure_paragraphs(response)
+        else:
+            fallback_text = f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}".strip()
+            fallback_text = _truncate_words(fallback_text)
+            if not fallback_text:
+                fallback_text = "This recipe is a reader favourite straight from our Airtable collection."
+            body = f"<p>{fallback_text}</p>"
+
+        parts = [f"<h2>{title}</h2>"]
+        if figure:
+            parts.append(figure)
+        parts.append(body)
+
+        source_url = recipe.get("url")
+        if source_url:
+            parts.append(f'<p><a href="{source_url}">View Full Recipe</a></p>')
+
+        return "\n".join(part for part in parts if part)
+
+    def _build_cooking_tips(self) -> str:
+        content = self._chat_template(
+            COOKING_TIPS_TEMPLATE.format(cuisine=self.context["cuisine"]),
+            max_tokens=350,
+        )
+
+        if not content:
+            return (
+                f"<h2>Cooking Tips</h2>\n"
+                f"<p>Focus on fresh ingredients and balanced seasoning to make every {self.context['cuisine']} dish shine.</p>"
+            )
+
+        content = _ensure_paragraphs(content)
+        if not content.startswith("<h2>"):
+            content = f"<h2>Cooking Tips</h2>\n{content}"
         return content
-    except Exception as e:
-        print(f"Error generating intro: {e}")
-        return f"<p>Welcome to our collection of {context['cuisine']} recipes!</p>"
 
-def generate_recipe_sections(recipes_list, context):
-    """Generate individual recipe sections."""
-    sections = []
-    
-    for recipe in recipes_list:
+    def _build_conclusion(self) -> str:
+        content = self._chat_template(
+            CONCLUSION_TEMPLATE.format(
+                query=self.query,
+                cuisine=self.context["cuisine"],
+            ),
+            max_tokens=260,
+        )
+
+        if not content:
+            return (
+                f"<h2>Conclusion</h2>\n"
+                f"<p>We hope these {self.context['cuisine']} recipes inspire your next meal.</p>"
+            )
+
+        return _ensure_paragraphs(content)
+
+    # ------------------------------------------------------------------
+    # LLM helper
+    # ------------------------------------------------------------------
+    def _chat_template(self, user_prompt: str, *, max_tokens: int) -> Optional[str]:
         try:
             response = openai.chat.completions.create(
                 model=LLM_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are a professional food writer who creates engaging, appetizing content."},
-                    {"role": "user", "content": RECIPE_SECTION_TEMPLATE.format(
-                        cuisine=context['cuisine'],
-                        title=recipe['title'],
-                        description=recipe.get('description', '') or f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}"
-                    )}
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=400,
-                temperature=0.7
+                max_tokens=max_tokens,
+                temperature=0.7,
             )
-            
-            section = f"<h2>{recipe['title']}</h2>"
-            image_url, airtable_field = extract_remote_image_url(recipe)
+        except Exception as exc:
+            print(f"Error contacting language model: {exc}")
+            return None
 
-            section += _build_image_figure(recipe['title'], image_url, airtable_field)
-            
-            # Ensure content is properly formatted as HTML paragraph
-            content = response.choices[0].message.content.strip()
-            
-            # If content doesn't have <p> tags, wrap it as a single paragraph
-            if not content.startswith('<p>'):
-                content = f'<p>{content}</p>'
-            
-            section += f"\n{content}"
-            
-            if recipe.get('url'):
-                section += f'\n<p><a href="{recipe["url"]}">View Full Recipe</a></p>'
-            sections.append(section)
-            
-        except Exception as e:
-            print(f"Error generating section for {recipe['title']}: {e}")
-            image_url, airtable_field = extract_remote_image_url(recipe)
+        if not response.choices:
+            return None
 
-            fallback_section = f"<h2>{recipe['title']}</h2>"
+        content = response.choices[0].message.content or ""
+        return content.strip()
 
-            fallback_section += _build_image_figure(
-                recipe['title'],
-                image_url,
-                airtable_field,
-            )
-            
-            # Create a concise fallback description (50-100 words)
-            ingredients = recipe.get('ingredients', '')
-            instructions = recipe.get('instructions', '')
-            fallback_text = f"{ingredients} {instructions}".strip()
-            
-            # Truncate to approximately 50-100 words if too long
-            words = fallback_text.split()
-            if len(words) > 100:
-                fallback_text = ' '.join(words[:100]) + '...'
-            
-            fallback_section += f"<p>{fallback_text}</p>"
-            
-            sections.append(fallback_section)
-    
-    return "\n\n".join(sections)
 
-def generate_cooking_tips(context):
-    """Generate cooking tips section."""
-    try:
-        response = openai.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a professional food writer who creates engaging, appetizing content."},
-                {"role": "user", "content": COOKING_TIPS_TEMPLATE.format(cuisine=context['cuisine'])}
-            ],
-            max_tokens=400,
-            temperature=0.7
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"Error generating cooking tips: {e}")
-        return f"<p>Master the art of {context['cuisine']} cooking with these essential tips.</p>"
+def generate_article(query: str, recipes_list: Sequence[Dict]) -> str:
+    """Generate a complete article that hotlinks Airtable-hosted imagery."""
+    builder = RecipeArticleBuilder(query, recipes_list)
+    return builder.build()
 
-def generate_conclusion(query, context):
-    """Generate article conclusion."""
-    try:
-        response = openai.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a professional food writer who creates engaging, appetizing content."},
-                {"role": "user", "content": CONCLUSION_TEMPLATE.format(
-                    query=query,
-                    cuisine=context['cuisine']
-                )}
-            ],
-            max_tokens=300,
-            temperature=0.7
-        )
-        content = response.choices[0].message.content.strip()
-        
-        # Ensure content is properly formatted as HTML paragraphs
-        if not content.startswith('<p>') and not content.startswith('<h2>'):
-            # Split into paragraphs and wrap each in <p> tags
-            paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
-            if paragraphs:
-                content = '\n\n'.join([f'<p>{p}</p>' for p in paragraphs])
-            else:
-                content = f'<p>{content}</p>'
-        
-        return content
-    except Exception as e:
-        print(f"Error generating conclusion: {e}")
-        return f"<h2>Conclusion</h2><p>We hope you enjoy exploring these {context['cuisine']} recipes!</p>"
 
 # Legacy function for backward compatibility
-def generate_summary(recipes_list):
+def generate_summary(recipes_list: Iterable[Dict]) -> str:
     """Legacy function - now generates a simple summary."""
-    if not recipes_list:
+    recipes = list(recipes_list)
+    if not recipes:
         return "No recipes found."
-    
-    recipe_titles = [recipe['title'] for recipe in recipes_list]
-    return f"<h2>Found Recipes</h2><ul>" + "".join([f"<li>{title}</li>" for title in recipe_titles]) + "</ul>"
+
+    recipe_titles = [recipe.get("title", "Untitled Recipe") for recipe in recipes]
+    return (
+        "<h2>Found Recipes</h2><ul>"
+        + "".join([f"<li>{title}</li>" for title in recipe_titles])
+        + "</ul>"
+    )
