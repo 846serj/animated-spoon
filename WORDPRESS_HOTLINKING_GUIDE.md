@@ -76,15 +76,13 @@ result = create_wordpress_post_with_hotlinks(
 Your existing content generation already creates hotlinked images, but you can ensure proper processing:
 
 ```python
-from tools.wordpress_integration import WordPressHotlinkIntegration
+from tools.wordpress_integration import ensure_hotlinked_images, WordPressHotlinkIntegration
 
-wp_integration = WordPressHotlinkIntegration(wp_site_url, wp_username, wp_password)
-
-# Process content to ensure hotlinking
-processed_content = wp_integration.process_content_for_hotlinking(content)
+processed_content, image_urls = ensure_hotlinked_images(content)
 
 # Validate image URLs
-for image_url in wp_integration.get_image_hotlinks_from_content(content):
+wp_integration = WordPressHotlinkIntegration(wp_site_url, wp_username, wp_password)
+for image_url in image_urls:
     if wp_integration.validate_image_url(image_url):
         print(f"✅ Image accessible: {image_url}")
     else:

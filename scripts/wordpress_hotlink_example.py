@@ -13,10 +13,13 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.wordpress_integration import create_wordpress_post_with_hotlinks, validate_wordpress_hotlinking_setup
+from tools.wordpress_integration import (
+    WordPressHotlinkIntegration,
+    create_wordpress_post_with_hotlinks,
+    ensure_hotlinked_images,
+    validate_wordpress_hotlinking_setup,
+)
 from tools.generator import generate_article
-from tools.retrieval import search_recipes
-import json
 
 
 def example_wordpress_hotlinking():
@@ -94,7 +97,6 @@ def example_wordpress_hotlinking():
         print(f"Status: {result.get('status')}")
         
         # Show information about external images in the post
-        from tools.wordpress_integration import WordPressHotlinkIntegration
         wp_integration = WordPressHotlinkIntegration(WP_SITE_URL, WP_USERNAME, WP_PASSWORD)
         image_urls = wp_integration.get_image_hotlinks_from_content(article_content)
         print(f"External images in content: {len(image_urls)}")
@@ -120,12 +122,10 @@ def validate_image_urls_example():
     
     print("Validating image URLs...")
     
-    from tools.wordpress_integration import WordPressHotlinkIntegration
-    
     # Create integration instance (you'd use real credentials)
     wp_integration = WordPressHotlinkIntegration(
         wp_site_url="https://your-site.com",
-        wp_username="username", 
+        wp_username="username",
         wp_password="password"
     )
     
@@ -153,21 +153,12 @@ def process_content_example():
     print("Original content:")
     print(sample_content)
     
-    from tools.wordpress_integration import WordPressHotlinkIntegration
-    
-    wp_integration = WordPressHotlinkIntegration(
-        wp_site_url="https://your-site.com",
-        wp_username="username",
-        wp_password="password"
-    )
-    
-    processed_content = wp_integration.process_content_for_hotlinking(sample_content)
-    
+    processed_content, image_urls = ensure_hotlinked_images(sample_content)
+
     print("\nProcessed content:")
     print(processed_content)
-    
+
     # Extract image URLs
-    image_urls = wp_integration.get_image_hotlinks_from_content(processed_content)
     print(f"\nFound {len(image_urls)} image URLs:")
     for url in image_urls:
         print(f"  - {url}")
