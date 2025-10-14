@@ -17,7 +17,11 @@ import time
 import faiss
 from urllib.parse import urlparse
 
-from tools.image_utils import build_remote_image_figure, extract_remote_image_url
+from tools.image_utils import (
+    build_remote_image_figure,
+    collect_image_hotlinks,
+    extract_remote_image_url,
+)
 from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
 from urllib3.util import Retry
@@ -311,7 +315,13 @@ def _is_transient_image_fetch_error(error: requests.RequestException) -> bool:
 
 
 def filter_inaccessible_image_recipes(recipes):
-    """Remove recipes whose remote images cannot be reached reliably."""
+    """Remove recipes whose remote images cannot be reached reliably.
+
+    Only lightweight HEAD requests are issued so we never download the image
+    bytes. This keeps the workflow compatible with hotlinking-only publishing
+    flows such as WordPress automations that avoid populating the media
+    library.
+    """
     accessible_recipes = []
     removed_recipes = []
 
@@ -349,32 +359,14 @@ def filter_inaccessible_image_recipes(recipes):
                 accessible_recipes.append(recipe)
                 continue
 
-            try:
-                with WORDPRESS_PROXY_SESSION.get(
-                    image_url,
-                    stream=True,
-                    timeout=WORDPRESS_PROXY_TIMEOUT,
-                ) as upstream_response:
-                    upstream_response.raise_for_status()
-            except requests.RequestException as exc_get:
-                if _is_transient_image_fetch_error(exc_get):
-                    print(
-                        "Transient image availability issue (GET)",
-                        recipe.get("title", "Untitled Recipe"),
-                        image_url,
-                        getattr(getattr(exc_get, "response", None), "status_code", None),
-                    )
-                    accessible_recipes.append(recipe)
-                    continue
-
-                removed_recipes.append({
-                    "title": recipe.get("title", "Untitled Recipe"),
-                    "image_url": image_url,
-                    "airtable_field": airtable_field,
-                    "reason": "fetch_error",
-                    "error": str(exc_get),
-                })
-                continue
+            removed_recipes.append({
+                "title": recipe.get("title", "Untitled Recipe"),
+                "image_url": image_url,
+                "airtable_field": airtable_field,
+                "reason": "head_error",
+                "error": str(exc),
+            })
+            continue
 
         accessible_recipes.append(recipe)
 
@@ -580,17 +572,7 @@ def generate_recipe_article():
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
 
         # Surface image hotlink information so downstream systems avoid re-hosting.
-        image_hotlinks = []
-        for recipe in top_recipes:
-            image_url, airtable_field = extract_remote_image_url(recipe)
-            if not image_url:
-                continue
-            image_hotlinks.append({
-                'title': recipe.get('title', 'Untitled Recipe'),
-                'image_url': image_url,
-                'airtable_field': airtable_field,
-                'hotlink': True,
-            })
+        image_hotlinks = collect_image_hotlinks(top_recipes)
 
         print("=== Recipe Query Completed Successfully ===")
 

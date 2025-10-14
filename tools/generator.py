@@ -1,4 +1,25 @@
-"""Recipe article generation that preserves original Airtable image links."""
+"""Recipe article generation that preserves original Airtable image links.
+
+Preparing Images for Publishing
+===============================
+
+The generator intentionally avoids downloading or re-hosting Airtable
+attachments so the resulting HTML can hotlink imagery from its original
+source. The flow works as follows:
+
+1. Each recipe section calls :func:`extract_remote_image_url` to locate the
+   Airtable field that already stores a shareable URL (for example
+   ``image_link`` or ``image_url``).
+2. The URL and field metadata are passed to :func:`build_remote_image_figure`,
+   which emits a ``<figure>`` element containing an ``<img>`` tag whose
+   ``src`` attribute points directly at the remote asset.
+3. No attempt is made to download, cache, or upload the imagery to the
+   destination site. Instead we expose an ``image_hotlinks`` payload so CMS
+   automations—such as WordPress scripts—can reuse the remote URLs when
+   setting featured images or inline content.
+4. Recipes without a valid remote URL simply omit the figure element while the
+   rest of the textual draft remains intact.
+"""
 
 from __future__ import annotations
 

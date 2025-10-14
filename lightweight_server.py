@@ -15,6 +15,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from tools import retrieval, generator
+from tools.image_utils import collect_image_hotlinks
 
 app = Flask(__name__)
 
@@ -68,11 +69,14 @@ def generate_recipe_article():
         # Extract sources
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
         
+        image_hotlinks = collect_image_hotlinks(top_recipes)
+
         return jsonify({
             'article': article,
             'sources': sources,
             'recipe_count': len(top_recipes),
-            'query': query
+            'query': query,
+            'image_hotlinks': image_hotlinks,
         })
         
     except Exception as e:

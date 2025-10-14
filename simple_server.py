@@ -12,7 +12,7 @@ import json
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from tools import airtable_sync, embeddings, vector_store, retrieval, generator
-from tools.image_utils import extract_remote_image_url
+from tools.image_utils import collect_image_hotlinks
 
 app = Flask(__name__)
 
@@ -129,17 +129,7 @@ def generate_recipe_article():
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
 
         # Surface image hotlink information so downstream systems avoid re-hosting.
-        image_hotlinks = []
-        for recipe in top_recipes:
-            image_url, airtable_field = extract_remote_image_url(recipe)
-            if not image_url:
-                continue
-            image_hotlinks.append({
-                'title': recipe.get('title', 'Untitled Recipe'),
-                'image_url': image_url,
-                'airtable_field': airtable_field,
-                'hotlink': True,
-            })
+        image_hotlinks = collect_image_hotlinks(top_recipes)
 
         return jsonify({
             'article': article,

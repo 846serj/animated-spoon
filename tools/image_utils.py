@@ -1,13 +1,14 @@
 """Utility helpers for working with recipe imagery.
 
-These helpers intentionally keep image handling lightweight so that the
-system never downloads or re-hosts assets. Instead we surface the remote
-URLs that already live in Airtable and return them in a consistent format
-for downstream HTML generation or validation.
+The goal is to hotlink Airtable-hosted assets without ever downloading or
+re-uploading them. WordPress automation scripts can therefore embed the
+returned URLs directly (for example by writing ``<img src="...">`` into the
+post body or storing the URL as the featured image meta) and avoid filling the
+destination media library with duplicates.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 # Fields that Airtable uses to store the original image URL. The order
@@ -77,6 +78,28 @@ def extract_remote_image_url(recipe: Dict) -> Tuple[Optional[str], Optional[str]
                 return url, "attachments"
 
     return None, None
+
+
+def collect_image_hotlinks(recipes: Iterable[Dict]) -> List[Dict[str, object]]:
+    """Return metadata describing every hotlinkable image in ``recipes``."""
+
+    hotlinks: List[Dict[str, object]] = []
+
+    for recipe in recipes:
+        image_url, airtable_field = extract_remote_image_url(recipe)
+        if not image_url:
+            continue
+
+        hotlinks.append(
+            {
+                "title": recipe.get("title", "Untitled Recipe"),
+                "image_url": image_url,
+                "airtable_field": airtable_field,
+                "hotlink": True,
+            }
+        )
+
+    return hotlinks
 
 
 def build_image_credit(image_url: str) -> str:

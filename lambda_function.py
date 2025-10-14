@@ -7,6 +7,7 @@ Industry standard for enterprise server-to-server AI services.
 import json
 import os
 from tools import retrieval, generator
+from tools.image_utils import collect_image_hotlinks
 
 # Pre-computed data (loaded once per Lambda instance)
 recipes = None
@@ -80,6 +81,8 @@ def lambda_handler(event, context):
         # Extract sources
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
         
+        image_hotlinks = collect_image_hotlinks(top_recipes)
+
         return {
             'statusCode': 200,
             'headers': {
@@ -90,7 +93,8 @@ def lambda_handler(event, context):
                 'article': article,
                 'sources': sources,
                 'recipe_count': len(top_recipes),
-                'query': query
+                'query': query,
+                'image_hotlinks': image_hotlinks,
             })
         }
         
