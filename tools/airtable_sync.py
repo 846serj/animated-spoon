@@ -36,13 +36,23 @@ def fetch_airtable_records():
     recipes = []
     for record in all_records:
         fields = record.get("fields", {})
+
+        # Preserve every image-related Airtable field so downstream article
+        # generators can keep the original hotlinked photography instead of
+        # forcing a re-upload to the publishing CMS.
         recipe = {
             "id": record["id"],
             "title": fields.get("Title", ""),
             "description": fields.get("Description", ""),
             "category": fields.get("Category", ""),
             "tags": fields.get("Tags", []),
-            "url": fields.get("URL", "")
+            "url": fields.get("URL", ""),
+            "image_link": fields.get("Image Link", ""),
+            "image_url": fields.get("Image URL", ""),
+            "image": fields.get("Image", ""),
+            "photo": fields.get("Photo", ""),
+            "picture": fields.get("Picture", ""),
+            "attachments": fields.get("Attachments", []),
         }
         recipes.append(recipe)
     

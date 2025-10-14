@@ -16,6 +16,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib.parse import urlparse
 
+from tools.generator import (
+    generate_article as build_rich_article,
+    generate_article_fallback,
+)
 from tools.image_utils import extract_remote_image_url
 from urllib3.util import Retry
 
@@ -207,45 +211,14 @@ def filter_inaccessible_image_recipes(recipes):
     return accessible_recipes, removed_recipes
 
 def generate_article(query, recipes):
-    """Generate article from recipes."""
+    """Generate an HTML article while preserving original image hotlinks."""
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+
     try:
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        
-        # Prepare recipe context
-        recipe_context = ""
-        for i, recipe in enumerate(recipes[:5], 1):
-            recipe_context += f"\n{i}. {recipe.get('title', 'Untitled Recipe')}\n"
-            recipe_context += f"   Ingredients: {recipe.get('ingredients', 'N/A')}\n"
-            recipe_context += f"   Instructions: {recipe.get('instructions', 'N/A')}\n"
-            if recipe.get('url'):
-                recipe_context += f"   Source: {recipe['url']}\n"
-        
-        # Generate article
-        prompt = f"""You are a professional food writer. Create a comprehensive article about: {query}
-
-Use these recipes as inspiration and reference:
-
-{recipe_context}
-
-Write a complete article that includes:
-1. An engaging introduction
-2. The requested number of recipes with full ingredients and instructions
-3. Tips and variations
-4. A conclusion
-
-Make it professional, engaging, and practical for home cooks."""
-
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"Error generating article: {e}")
-        return f"Error generating article: {str(e)}"
+        return build_rich_article(query, recipes)
+    except Exception as exc:
+        print(f"Error generating article via LLM pipeline: {exc}")
+        return generate_article_fallback(query, recipes)
 
 @app.route('/api/recipe-query', methods=['POST'])
 def generate_recipe_article():

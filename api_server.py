@@ -17,6 +17,10 @@ import time
 import faiss
 from urllib.parse import urlparse
 
+from tools.generator import (
+    generate_article as build_structured_article,
+    generate_article_fallback,
+)
 from tools.image_utils import extract_remote_image_url
 from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
@@ -424,70 +428,19 @@ def generate_embedding(text):
     return response.data[0].embedding
 
 def generate_article(query, recipes):
-    """Generate article using systematic approach."""
+    """Generate article using the structured generator with a deterministic fallback."""
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+
     try:
-        # Import the systematic generator
-        from tools.generator import generate_article as systematic_generate
-        
-        # Use the systematic approach
-        return systematic_generate(query, recipes)
-        
-    except Exception as e:
-        print(f"Error with systematic generation: {e}")
-        # Fallback to simple generation
+        return build_structured_article(query, recipes)
+    except Exception as exc:
+        print(f"Error with systematic generation: {exc}")
         return generate_article_simple(query, recipes)
 
+
 def generate_article_simple(query, recipes):
-    """Fallback simple article generation."""
-    try:
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        
-        # Prepare recipe context
-        recipe_context = ""
-        for i, recipe in enumerate(recipes[:5], 1):
-            recipe_context += f"\n{i}. {recipe.get('title', 'Untitled Recipe')}\n"
-            recipe_context += f"   Ingredients: {recipe.get('ingredients', 'N/A')}\n"
-            recipe_context += f"   Instructions: {recipe.get('instructions', 'N/A')}\n"
-            if recipe.get('url'):
-                recipe_context += f"   Source: {recipe['url']}\n"
-        
-        # Generate article
-        prompt = f"""You are a professional food writer. Create a comprehensive article about: {query}
-
-Use these recipes as inspiration and reference:
-
-{recipe_context}
-
-Write a complete article that includes:
-1. An engaging introduction
-2. The requested number of recipes with full ingredients and instructions
-3. Tips and variations
-4. A conclusion
-
-Make it professional, engaging, and practical for home cooks.
-
-IMPORTANT: Format the article using HTML tags instead of markdown:
-- Use <h2> for main headings
-- Use <h3> for recipe titles
-- Use <h4> for section headings like "Ingredients:" and "Instructions:"
-- Use <ul> and <li> for lists
-- Use <p> for paragraphs
-- Use <strong> for bold text
-- Use <em> for italic text
-
-Do NOT use markdown syntax like #, ##, ###, ####, or **."""
-
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"Error generating article: {e}")
-        return f"Error generating article: {str(e)}"
+    """Fallback simple article generation that preserves remote imagery."""
+    return generate_article_fallback(query, recipes)
 
 @app.route('/api/recipe-query', methods=['POST'])
 def generate_recipe_article():
