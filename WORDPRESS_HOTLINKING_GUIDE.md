@@ -115,12 +115,6 @@ Content-Type: application/json
 }
 ```
 
-### Proxy Images (if needed)
-```bash
-GET /api/wordpress/proxy?url=https://example.com/image.jpg
-# Redirects to original image
-```
-
 ## How It Works
 
 ### 1. Image URL Extraction
@@ -141,6 +135,7 @@ The integration creates WordPress posts with:
 - Content containing `<img src="external_url">` tags
 - All images processed for hotlinking
 - Validation of all image URLs before posting
+- No proxying or rewriting that would trigger WordPress uploads
 
 ### 4. WordPress Display
 The WordPress plugin:
