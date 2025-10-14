@@ -6,7 +6,8 @@ Deploy to Vercel, Netlify Functions, or AWS Lambda.
 
 import json
 import os
-from tools import retrieval, generator
+from tools import retrieval
+from tools.drafting import prepare_article_payload, DEFAULT_BLOCKED_IMAGE_DOMAINS
 
 # Pre-computed data (loaded once per function instance)
 recipes = None
@@ -68,21 +69,26 @@ def handler(event, context=None):
                 'body': json.dumps({'error': 'No recipes found'})
             }
         
-        # Generate article
-        article = generator.generate_article(query, top_recipes)
-        
-        # Extract sources
-        sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
-        
+        payload, removed = prepare_article_payload(
+            query,
+            top_recipes,
+            blocked_domains=DEFAULT_BLOCKED_IMAGE_DOMAINS,
+        )
+
+        if not payload:
+            return {
+                'statusCode': 502,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({
+                    'error': 'No recipes with accessible images found',
+                    'removed_recipes': removed,
+                })
+            }
+
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({
-                'article': article,
-                'sources': sources,
-                'recipe_count': len(top_recipes),
-                'query': query
-            })
+            'body': json.dumps(payload)
         }
         
     except Exception as e:

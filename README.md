@@ -9,8 +9,9 @@ A modular RAG (Retrieval-Augmented Generation) pipeline for recipe content creat
 - **Scalable**: Handles 10k+ recipes with batch embedding generation
 - **Flexible**: Easy to swap LLMs or vector stores
 - **WordPress Ready**: Built-in HTML output generation
-- **Remote Image Hotlinking**: Articles embed the original Airtable image URLs
-  directly so nothing ever touches the destination site's media library
+- **Remote Image Hotlinking**: Shared helpers guarantee the original Airtable
+  image URLs are embedded directly so nothing ever touches the destination
+  site's media library
 - **Filtered Search**: Search by category and tags
 - **Real-time Updates**: Fetch latest data from Airtable on demand
 
@@ -37,6 +38,7 @@ recipe-writer/
 │   ├── sync_from_airtable.py           # Complete Airtable sync workflow
 │   ├── build_embeddings.py             # Generate embeddings for recipes
 │   ├── build_faiss_index.py            # Build FAISS vector index
+│   ├── draft_recipe_article.py         # One-command article drafting CLI
 │   └── run_query.py                    # Example query script
 │
 ├── config.py                           # Configuration settings
@@ -71,7 +73,16 @@ recipe-writer/
 
 ## Usage
 
-### Simple Query Interface (Recommended)
+### One-command Article Drafting (Recommended)
+```bash
+python scripts/draft_recipe_article.py "7 cozy fall soups"
+```
+
+The CLI prints the generated HTML plus a list of remote image URLs so you can
+verify hotlinking at a glance. Pass `--json` to copy the full payload (article,
+sources, hotlinked image metadata) into other tools.
+
+### Simple Query Interface
 ```bash
 ./query "your search query here"
 ```

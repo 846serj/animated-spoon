@@ -11,8 +11,8 @@ import json
 # Add current directory to path to import tools
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from tools import airtable_sync, embeddings, vector_store, retrieval, generator
-from tools.image_utils import collect_image_hotlinks, extract_remote_image_url
+from tools import airtable_sync, embeddings, vector_store, retrieval
+from tools.drafting import prepare_article_payload, DEFAULT_BLOCKED_IMAGE_DOMAINS
 
 app = Flask(__name__)
 
@@ -122,22 +122,19 @@ def generate_recipe_article():
         if not top_recipes:
             return jsonify({'error': 'No recipes found'}), 404
         
-        # Generate complete article
-        article = generator.generate_article(query, top_recipes)
-        
-        # Extract sources from recipes
-        sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
+        payload, removed = prepare_article_payload(
+            query,
+            top_recipes,
+            blocked_domains=DEFAULT_BLOCKED_IMAGE_DOMAINS,
+        )
 
-        # Surface image hotlink information so downstream systems avoid re-hosting.
-        image_hotlinks = collect_image_hotlinks(top_recipes)
+        if not payload:
+            return jsonify({
+                'error': 'No recipes with accessible images found',
+                'removed_recipes': removed,
+            }), 502
 
-        return jsonify({
-            'article': article,
-            'sources': sources,
-            'recipe_count': len(top_recipes),
-            'query': query,
-            'image_hotlinks': image_hotlinks,
-        })
+        return jsonify(payload)
         
     except Exception as e:
         print(f"Error generating recipe article: {e}")
