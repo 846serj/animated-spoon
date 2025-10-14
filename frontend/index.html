@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recipe Article Draft</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.3/tinymce.min.js" referrerpolicy="origin"></script>
+  </head>
+  <body data-api-base="">
+    <main class="layout">
+      <section class="controls">
+        <h1>Draft a Recipe Article</h1>
+        <form id="article-form">
+          <label for="query">Article prompt</label>
+          <textarea id="query" name="query" rows="3" placeholder="e.g. 5 cozy fall soups to warm up chilly evenings" required></textarea>
+          <button type="submit">Generate Draft</button>
+        </form>
+        <div id="status" role="status" aria-live="polite"></div>
+      </section>
+      <section class="editor">
+        <textarea id="article-editor"></textarea>
+      </section>
+    </main>
+    <template id="sources-template">
+      <h2>Sources</h2>
+      <ul></ul>
+    </template>
+    <script src="editor.js" type="module"></script>
+  </body>
+</html>
