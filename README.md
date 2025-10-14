@@ -74,6 +74,22 @@ recipe-writer/
 ./query "your search query here"
 ```
 
+### Browser-based editor
+
+A lightweight TinyMCE editor is available in `frontend/index.html`. It connects to
+`/api/recipe-query` so you can generate a draft, polish the copy directly in the
+browser, and then paste it into your CMS. Start any of the Flask servers and
+open the file locally:
+
+```bash
+python production_server.py  # or your preferred server
+# then open frontend/index.html in a browser
+```
+
+> **Note:** When opening the file directly from disk the editor will default to
+> `http://localhost:3004` for API calls. To use a different domain, set the
+> `data-api-base` attribute on the `<body>` tag in `frontend/index.html`.
+
 ### Complete Airtable Sync
 ```bash
 python scripts/sync_from_airtable.py
