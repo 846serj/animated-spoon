@@ -10,8 +10,6 @@ import openai
 from config import *
 from .image_utils import build_remote_image_figure, extract_remote_image_url
 from .prompt_templates import (
-    CONCLUSION_TEMPLATE,
-    COOKING_TIPS_TEMPLATE,
     INTRO_TEMPLATE,
     RECIPE_SECTION_TEMPLATE,
     extract_context,
@@ -99,14 +97,6 @@ class RecipeArticleBuilder:
             if section_html:
                 sections.append(section_html)
 
-        tips = self._build_cooking_tips()
-        if tips:
-            sections.append(tips)
-
-        conclusion = self._build_conclusion()
-        if conclusion:
-            sections.append(conclusion)
-
         return "\n\n".join(part.strip() for part in sections if part and part.strip())
 
     # ------------------------------------------------------------------
@@ -167,40 +157,6 @@ class RecipeArticleBuilder:
             parts.append(f'<p><a href="{source_url}">View Full Recipe</a></p>')
 
         return "\n".join(part for part in parts if part)
-
-    def _build_cooking_tips(self) -> str:
-        content = self._chat_template(
-            COOKING_TIPS_TEMPLATE.format(cuisine=self.context["cuisine"]),
-            max_tokens=350,
-        )
-
-        if not content:
-            return (
-                f"<h2>Cooking Tips</h2>\n"
-                f"<p>Focus on fresh ingredients and balanced seasoning to make every {self.context['cuisine']} dish shine.</p>"
-            )
-
-        content = _ensure_paragraphs(content)
-        if not content.startswith("<h2>"):
-            content = f"<h2>Cooking Tips</h2>\n{content}"
-        return content
-
-    def _build_conclusion(self) -> str:
-        content = self._chat_template(
-            CONCLUSION_TEMPLATE.format(
-                query=self.query,
-                cuisine=self.context["cuisine"],
-            ),
-            max_tokens=260,
-        )
-
-        if not content:
-            return (
-                f"<h2>Conclusion</h2>\n"
-                f"<p>We hope these {self.context['cuisine']} recipes inspire your next meal.</p>"
-            )
-
-        return _ensure_paragraphs(content)
 
     # ------------------------------------------------------------------
     # LLM helper
