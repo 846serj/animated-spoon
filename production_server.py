@@ -4,7 +4,7 @@ Production recipe server - completely self-contained.
 No external imports that could cause embedding generation.
 """
 
-from flask import Flask, request, jsonify, redirect
+from flask import Flask, request, jsonify
 import os
 import json
 import sys
@@ -234,41 +234,6 @@ def generate_recipe_article():
     except Exception as e:
         print(f"Error generating recipe article: {e}")
         return jsonify({'error': str(e)}), 500
-
-
-def _validate_remote_image_url(image_url):
-    """Validate that the provided image URL can be used directly."""
-    if not image_url:
-        return False
-
-    try:
-        parsed = urlparse(image_url)
-    except ValueError:
-        return False
-
-    if parsed.scheme not in ('http', 'https'):
-        return False
-
-    if _is_blocked_image_domain(image_url):
-        return False
-
-    return True
-
-
-@app.route('/api/wordpress/proxy', methods=['GET'])
-def proxy_wordpress_asset():
-    """Redirect to the original image to keep it hosted remotely."""
-    image_url = request.args.get('url', '').strip()
-
-    if not image_url:
-        return jsonify({'error': 'Missing url parameter'}), 400
-
-    if not _validate_remote_image_url(image_url):
-        return jsonify({'error': 'Invalid or blocked image URL'}), 400
-
-    return redirect(image_url, code=302)
-
-
 @app.route('/', methods=['GET'])
 def root():
     """Root endpoint."""
