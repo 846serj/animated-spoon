@@ -295,6 +295,22 @@ def _is_blocked_image_domain(image_url):
     return any(hostname.endswith(domain) for domain in BLOCKED_IMAGE_DOMAINS)
 
 
+def _is_transient_image_fetch_error(error: requests.RequestException) -> bool:
+    """Return True when an image fetch failure looks temporary."""
+    if isinstance(error, (requests.Timeout, requests.ConnectionError)):
+        return True
+
+    response = getattr(error, "response", None)
+    if response is None:
+        return False
+
+    status_code = getattr(response, "status_code", None)
+    if status_code is None:
+        return False
+
+    return status_code >= 500 or status_code == 429
+
+
 def filter_inaccessible_image_recipes(recipes):
     """Remove recipes whose remote images cannot be reached reliably."""
     accessible_recipes = []
@@ -322,7 +338,17 @@ def filter_inaccessible_image_recipes(recipes):
                 timeout=WORDPRESS_PROXY_TIMEOUT,
             )
             response.raise_for_status()
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            if _is_transient_image_fetch_error(exc):
+                print(
+                    "Transient image availability issue (HEAD)",
+                    recipe.get("title", "Untitled Recipe"),
+                    image_url,
+                    getattr(getattr(exc, "response", None), "status_code", None),
+                )
+                accessible_recipes.append(recipe)
+                continue
+
             try:
                 with WORDPRESS_PROXY_SESSION.get(
                     image_url,
@@ -330,12 +356,22 @@ def filter_inaccessible_image_recipes(recipes):
                     timeout=WORDPRESS_PROXY_TIMEOUT,
                 ) as upstream_response:
                     upstream_response.raise_for_status()
-            except requests.RequestException as exc:
+            except requests.RequestException as exc_get:
+                if _is_transient_image_fetch_error(exc_get):
+                    print(
+                        "Transient image availability issue (GET)",
+                        recipe.get("title", "Untitled Recipe"),
+                        image_url,
+                        getattr(getattr(exc_get, "response", None), "status_code", None),
+                    )
+                    accessible_recipes.append(recipe)
+                    continue
+
                 removed_recipes.append({
                     "title": recipe.get("title", "Untitled Recipe"),
                     "image_url": image_url,
                     "reason": "fetch_error",
-                    "error": str(exc),
+                    "error": str(exc_get),
                 })
                 continue
 
