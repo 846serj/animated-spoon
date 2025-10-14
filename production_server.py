@@ -4,7 +4,7 @@ Production recipe server - completely self-contained.
 No external imports that could cause embedding generation.
 """
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, redirect
 import os
 import json
 import sys
@@ -14,7 +14,6 @@ import openai
 import re
 import requests
 from requests.adapters import HTTPAdapter
-import mimetypes
 from urllib.parse import urlparse
 from urllib3.util import Retry
 
@@ -35,10 +34,8 @@ WORDPRESS_PROXY_RETRY = Retry(
     total=3,
     backoff_factor=0.5,
     status_forcelist=(429, 500, 502, 503, 504),
-    allowed_methods=("GET",),
+    allowed_methods=("HEAD", "GET"),
 )
-
-WORDPRESS_PROXY_ERROR_SNIPPET_LENGTH = 512
 
 WORDPRESS_PROXY_SESSION = requests.Session()
 WORDPRESS_PROXY_SESSION.headers.update(WORDPRESS_PROXY_HEADERS)
@@ -150,7 +147,7 @@ def _is_blocked_image_domain(image_url):
 
 
 def filter_inaccessible_image_recipes(recipes):
-    """Remove recipes whose images cannot be proxied reliably."""
+    """Remove recipes whose remote images cannot be reached reliably."""
     accessible_recipes = []
     removed_recipes = []
 
@@ -170,20 +167,28 @@ def filter_inaccessible_image_recipes(recipes):
             continue
 
         try:
-            with WORDPRESS_PROXY_SESSION.get(
+            response = WORDPRESS_PROXY_SESSION.head(
                 image_url,
-                stream=True,
+                allow_redirects=True,
                 timeout=WORDPRESS_PROXY_TIMEOUT,
-            ) as upstream_response:
-                upstream_response.raise_for_status()
-        except requests.RequestException as exc:
-            removed_recipes.append({
-                "title": recipe.get("title", "Untitled Recipe"),
-                "image_url": image_url,
-                "reason": "fetch_error",
-                "error": str(exc),
-            })
-            continue
+            )
+            response.raise_for_status()
+        except requests.RequestException:
+            try:
+                with WORDPRESS_PROXY_SESSION.get(
+                    image_url,
+                    stream=True,
+                    timeout=WORDPRESS_PROXY_TIMEOUT,
+                ) as upstream_response:
+                    upstream_response.raise_for_status()
+            except requests.RequestException as exc:
+                removed_recipes.append({
+                    "title": recipe.get("title", "Untitled Recipe"),
+                    "image_url": image_url,
+                    "reason": "fetch_error",
+                    "error": str(exc),
+                })
+                continue
 
         accessible_recipes.append(recipe)
 
@@ -285,63 +290,37 @@ def generate_recipe_article():
         return jsonify({'error': str(e)}), 500
 
 
+def _validate_remote_image_url(image_url):
+    """Validate that the provided image URL can be used directly."""
+    if not image_url:
+        return False
+
+    try:
+        parsed = urlparse(image_url)
+    except ValueError:
+        return False
+
+    if parsed.scheme not in ('http', 'https'):
+        return False
+
+    if _is_blocked_image_domain(image_url):
+        return False
+
+    return True
+
+
 @app.route('/api/wordpress/proxy', methods=['GET'])
 def proxy_wordpress_asset():
-    """Proxy remote assets (typically images) for WordPress drafts."""
+    """Redirect to the original image to keep it hosted remotely."""
     image_url = request.args.get('url', '').strip()
 
     if not image_url:
         return jsonify({'error': 'Missing url parameter'}), 400
 
-    parsed = urlparse(image_url)
-    if parsed.scheme not in ('http', 'https'):
-        return jsonify({'error': 'Invalid url scheme'}), 400
+    if not _validate_remote_image_url(image_url):
+        return jsonify({'error': 'Invalid or blocked image URL'}), 400
 
-    try:
-        with WORDPRESS_PROXY_SESSION.get(
-            image_url,
-            stream=True,
-            timeout=WORDPRESS_PROXY_TIMEOUT,
-        ) as upstream_response:
-            upstream_response.raise_for_status()
-            content = upstream_response.content
-            content_type = upstream_response.headers.get('Content-Type')
-            content_length = upstream_response.headers.get('Content-Length')
-    except requests.RequestException as exc:
-        error_details = {
-            'url': image_url,
-            'exception_type': type(exc).__name__,
-            'message': str(exc),
-        }
-
-        response = getattr(exc, 'response', None)
-        if response is not None:
-            error_details['status_code'] = response.status_code
-            error_details['response_content_type'] = response.headers.get('Content-Type')
-            error_details['response_content_length'] = response.headers.get('Content-Length')
-            try:
-                body_text = response.text
-            except UnicodeDecodeError:
-                body_text = response.content.decode('utf-8', 'replace')
-            error_details['response_body_snippet'] = body_text[:WORDPRESS_PROXY_ERROR_SNIPPET_LENGTH]
-
-        app.logger.warning(
-            "Failed to fetch WordPress proxy image",
-            extra={'image_url': image_url, 'exception_type': type(exc).__name__},
-            exc_info=exc,
-        )
-
-        return jsonify({'error': 'Failed to fetch image', 'details': error_details}), 502
-
-    if not content_type:
-        guessed_type, _ = mimetypes.guess_type(parsed.path)
-        content_type = guessed_type or 'application/octet-stream'
-
-    proxied = Response(content, status=200, content_type=content_type)
-    proxied.headers['Cache-Control'] = 'public, max-age=3600'
-    if content_length:
-        proxied.headers['Content-Length'] = content_length
-    return proxied
+    return redirect(image_url, code=302)
 
 
 @app.route('/', methods=['GET'])
