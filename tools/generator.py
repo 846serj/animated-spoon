@@ -1,219 +1,167 @@
-"""Recipe article generation that preserves original Airtable image links.
+"""Lightweight recipe article generator.
 
-Preparing images for publishing now follows a pure hotlink workflow:
-
-1. `extract_remote_image_url` identifies the Airtable field that already holds
-   a publicly reachable asset and returns the untouched URL.
-2. We never download or mirror that asset. The URL is passed straight through
-   to HTML generation so WordPress (or any CMS) can embed it via `<img src>`
-   without touching the media library.
-3. `build_remote_image_figure` wraps the hotlinked URL in a `<figure>` element
-   and annotates it with provenance metadata for easy auditing.
-4. If a recipe has no usable URL we simply omit the figure while still
-   returning the textual section, preventing broken placeholders.
-5. The API layer exposes `image_hotlinks` metadata so automation scripts can
-   set featured images or galleries using the same remote links.
+This module keeps the drafting flow intentionally small and predictable so it
+mirrors the simple Google Sheets workflow the editorial team is used to.  We
+only make two kinds of language-model calls: one for the roundup introduction
+and one for each selected recipe blurb.  The rest of the work is straightforward
+string assembly with gentle HTML escaping to avoid surprises when the copy is
+pasted into WordPress.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from html import escape
 from typing import Dict, Iterable, List, Optional, Sequence
 
 import openai
 
-from config import *
+from config import LLM_MODEL
 from .image_utils import build_remote_image_figure, extract_remote_image_url
-from .prompt_templates import (
-    INTRO_TEMPLATE,
-    RECIPE_SECTION_TEMPLATE,
-    extract_context,
-)
 
 SYSTEM_PROMPT = (
-    "You are a professional food writer who creates engaging, appetizing content."
+    "You are a warm, professional food writer. Draft friendly, down-to-earth "
+    "copy that sounds like it belongs in a recipe roundup."
 )
 
 
-def _deduplicate_recipes(recipes_list: Sequence[Dict]) -> List[Dict]:
-    """Remove duplicate recipe entries while preserving order."""
-    unique_recipes: List[Dict] = []
-    seen_identifiers = set()
+def _call_llm(prompt: str, *, max_tokens: int = 400) -> Optional[str]:
+    """Send a minimal chat completion request and return trimmed content."""
 
-    for recipe in recipes_list:
-        identifier = recipe.get("id") or recipe.get("record_id")
-
-        if not identifier:
-            title = (recipe.get("title") or "").strip().lower()
-            url = (recipe.get("url") or "").strip().lower()
-            if title or url:
-                identifier = (title, url)
-            else:
-                identifier = id(recipe)
-
-        if identifier in seen_identifiers:
-            continue
-
-        seen_identifiers.add(identifier)
-        unique_recipes.append(recipe)
-
-    return unique_recipes
-
-
-def _ensure_paragraphs(content: str) -> str:
-    """Wrap plain text content in HTML paragraphs if needed."""
-    if not content:
-        return ""
-
-    stripped = content.strip()
-    if stripped.startswith("<p>") or stripped.startswith("<h2>"):
-        return stripped
-
-    paragraphs = [p.strip() for p in stripped.split("\n\n") if p.strip()]
-    if not paragraphs:
-        return ""
-
-    return "\n\n".join(f"<p>{paragraph}</p>" for paragraph in paragraphs)
-
-
-def _truncate_words(text: str, limit: int = 100) -> str:
-    words = text.split()
-    if len(words) <= limit:
-        return text
-    return " ".join(words[:limit]) + "..."
-
-
-@dataclass
-class RecipeArticleBuilder:
-    """Coordinator that assembles article sections while preserving remote images."""
-
-    query: str
-    recipes: Sequence[Dict]
-
-    def __post_init__(self) -> None:
-        self.recipes = _deduplicate_recipes(self.recipes)
-        self.context = extract_context(self.query)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-    def build(self) -> str:
-        if not self.recipes:
-            return "No recipes found."
-
-        sections: List[str] = []
-
-        intro = self._build_intro()
-        if intro:
-            sections.append(intro)
-
-        for recipe in self.recipes:
-            section_html = self._build_recipe_section(recipe)
-            if section_html:
-                sections.append(section_html)
-
-        return "\n\n".join(part.strip() for part in sections if part and part.strip())
-
-    # ------------------------------------------------------------------
-    # Section builders
-    # ------------------------------------------------------------------
-    def _build_intro(self) -> str:
-        content = self._chat_template(
-            INTRO_TEMPLATE.format(
-                query=self.query,
-                cuisine=self.context["cuisine"],
-                number=self.context["number"],
-            ),
-            max_tokens=400,
+    try:
+        response = openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=max_tokens,
+            temperature=0.7,
         )
+    except Exception as exc:  # pragma: no cover - network failure fallback
+        print(f"Error contacting language model: {exc}")
+        return None
 
-        if not content:
-            return (
-                f"<p>Explore {self.context['number']} {self.context['cuisine']} recipes "
-                "that bring the spirit of the request to your kitchen.</p>"
+    if not response.choices:
+        return None
+
+    content = response.choices[0].message.content or ""
+    return content.strip() or None
+
+
+def _as_paragraphs(text: str) -> str:
+    """Convert plain text into HTML paragraphs with escaping."""
+
+    if not text:
+        return ""
+
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    if not lines:
+        return ""
+
+    return "\n".join(f"<p>{escape(line)}</p>" for line in lines)
+
+
+def _fallback_intro(headline: str, recipe_count: int) -> str:
+    """Provide a deterministic introduction when the LLM is unavailable."""
+
+    headline_text = escape(headline) if headline else "This Week's Recipes"
+    if recipe_count == 1:
+        body = "Dig into this handpicked dish and make tonight special."
+    else:
+        body = (
+            f"Explore {recipe_count} reader-loved recipes that bring this roundup "
+            "to life."
+        )
+    return f"<p>{headline_text}</p>\n<p>{escape(body)}</p>"
+
+
+def _fallback_blurb(recipe: Dict) -> str:
+    """Create a short blurb directly from stored recipe fields."""
+
+    description = recipe.get("description") or ""
+    if description:
+        return f"<p>{escape(description)}</p>"
+
+    ingredients = recipe.get("ingredients") or ""
+    instructions = recipe.get("instructions") or ""
+    combined = " ".join(part for part in (ingredients, instructions) if part)
+    combined = combined.strip() or "This reader favourite is a staple from our archive."
+    return f"<p>{escape(combined)}</p>"
+
+
+def _sanitize_link(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    url = url.strip()
+    return url or None
+
+
+def generate_article(headline: str, recipes_list: Sequence[Dict]) -> str:
+    """Generate a roundup article using simple, predictable steps."""
+
+    recipes: List[Dict] = [recipe for recipe in recipes_list if recipe]
+    if not recipes:
+        return "No recipes selected."
+
+    headline_text = (headline or "").strip() or "Recipe Roundup"
+
+    intro_prompt = (
+        "Write an engaging introduction (4-5 sentences) for a recipe roundup "
+        f"titled: \"{headline_text}\". Sound warm, clear, and inviting."
+    )
+    intro_text = _call_llm(intro_prompt, max_tokens=320)
+    intro_html = _as_paragraphs(intro_text) if intro_text else _fallback_intro(headline_text, len(recipes))
+
+    sections: List[str] = [intro_html]
+
+    for recipe in recipes:
+        title = (recipe.get("title") or "Untitled Recipe").strip()
+        description = recipe.get("description") or ""
+        if not description:
+            description = " ".join(
+                part
+                for part in (
+                    recipe.get("summary"),
+                    recipe.get("notes"),
+                    recipe.get("ingredients"),
+                    recipe.get("instructions"),
+                )
+                if part
             )
 
-        return _ensure_paragraphs(content)
-
-    def _build_recipe_section(self, recipe: Dict) -> str:
-        title = recipe.get("title") or "Untitled Recipe"
-        description = recipe.get("description") or (
-            f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}"
+        prompt = (
+            "Rewrite this recipe description to be warm, clear, and inviting. "
+            "Limit the copy to 3-4 sentences.\n"
+            f"\"{description}\""
         )
-
-        response = self._chat_template(
-            RECIPE_SECTION_TEMPLATE.format(
-                cuisine=self.context["cuisine"],
-                title=title,
-                description=description,
-            ),
-            max_tokens=380,
-        )
+        blurb_text = _call_llm(prompt, max_tokens=280)
+        blurb_html = _as_paragraphs(blurb_text) if blurb_text else _fallback_blurb(recipe)
 
         image_url, airtable_field = extract_remote_image_url(recipe)
-        figure = build_remote_image_figure(title, image_url, airtable_field)
+        figure_html = build_remote_image_figure(title, image_url, airtable_field)
 
-        if response:
-            body = _ensure_paragraphs(response)
-        else:
-            fallback_text = f"{recipe.get('ingredients', '')} {recipe.get('instructions', '')}".strip()
-            fallback_text = _truncate_words(fallback_text)
-            if not fallback_text:
-                fallback_text = "This recipe is a reader favourite straight from our Airtable collection."
-            body = f"<p>{fallback_text}</p>"
+        section_parts = [f"<h2>{escape(title)}</h2>"]
+        if figure_html:
+            section_parts.append(figure_html)
+        section_parts.append(blurb_html)
 
-        parts = [f"<h2>{title}</h2>"]
-        if figure:
-            parts.append(figure)
-        parts.append(body)
-
-        source_url = recipe.get("url")
-        if source_url:
-            parts.append(f'<p><a href="{source_url}">View Full Recipe</a></p>')
-
-        return "\n".join(part for part in parts if part)
-
-    # ------------------------------------------------------------------
-    # LLM helper
-    # ------------------------------------------------------------------
-    def _chat_template(self, user_prompt: str, *, max_tokens: int) -> Optional[str]:
-        try:
-            response = openai.chat.completions.create(
-                model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=max_tokens,
-                temperature=0.7,
+        link = _sanitize_link(recipe.get("url"))
+        if link:
+            section_parts.append(
+                f'<p><a href="{escape(link)}" target="_blank" rel="noopener">Get the recipe.</a></p>'
             )
-        except Exception as exc:
-            print(f"Error contacting language model: {exc}")
-            return None
 
-        if not response.choices:
-            return None
+        sections.append("\n".join(part for part in section_parts if part))
 
-        content = response.choices[0].message.content or ""
-        return content.strip()
+    return "\n\n".join(section for section in sections if section)
 
 
-def generate_article(query: str, recipes_list: Sequence[Dict]) -> str:
-    """Generate a complete article that hotlinks Airtable-hosted imagery."""
-    builder = RecipeArticleBuilder(query, recipes_list)
-    return builder.build()
-
-
-# Legacy function for backward compatibility
 def generate_summary(recipes_list: Iterable[Dict]) -> str:
-    """Legacy function - now generates a simple summary."""
-    recipes = list(recipes_list)
-    if not recipes:
-        return "No recipes found."
+    """Legacy helper that lists recipe titles for quick previews."""
 
-    recipe_titles = [recipe.get("title", "Untitled Recipe") for recipe in recipes]
-    return (
-        "<h2>Found Recipes</h2><ul>"
-        + "".join([f"<li>{title}</li>" for title in recipe_titles])
-        + "</ul>"
-    )
+    recipes = [recipe for recipe in recipes_list if recipe]
+    if not recipes:
+        return "No recipes selected."
+
+    items = [f"<li>{escape(recipe.get('title', 'Untitled Recipe'))}</li>" for recipe in recipes]
+    return "<h2>Found Recipes</h2><ul>" + "".join(items) + "</ul>"
