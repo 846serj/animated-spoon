@@ -15,6 +15,8 @@ import re
 import requests
 from requests.adapters import HTTPAdapter
 from urllib.parse import urlparse
+
+from tools.image_utils import extract_remote_image_url
 from urllib3.util import Retry
 
 app = Flask(__name__)
@@ -103,36 +105,9 @@ def search_recipes(query, k=5):
 
 
 def _get_image_url_from_recipe(recipe):
-    """Extract the first available image URL from a recipe record."""
-    candidate_fields = [
-        "image_link",
-        "image_url",
-        "image",
-        "photo",
-        "picture",
-        "Image",
-        "Photo",
-        "Picture",
-        "Image URL",
-        "Image Link",
-    ]
-
-    for field in candidate_fields:
-        value = recipe.get(field)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    attachments = recipe.get("attachments")
-    if isinstance(attachments, list):
-        for attachment in attachments:
-            if isinstance(attachment, dict):
-                url = attachment.get("url")
-                if isinstance(url, str) and url.strip():
-                    return url.strip()
-            elif isinstance(attachment, str) and attachment.strip():
-                return attachment.strip()
-
-    return None
+    """Extract the first available remote image URL from a recipe record."""
+    image_url, _ = extract_remote_image_url(recipe)
+    return image_url
 
 
 def _is_blocked_image_domain(image_url):

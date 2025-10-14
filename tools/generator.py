@@ -2,15 +2,36 @@
 Enhanced LLM-based content generation for recipes with multi-section article structure.
 """
 
+from typing import Optional
+
 import openai
 from config import *
+from .image_utils import build_image_credit, extract_remote_image_url
 from .prompt_templates import (
-    extract_context, 
-    INTRO_TEMPLATE, 
-    RECIPE_SECTION_TEMPLATE, 
-    COOKING_TIPS_TEMPLATE, 
+    extract_context,
+    INTRO_TEMPLATE,
+    RECIPE_SECTION_TEMPLATE,
+    COOKING_TIPS_TEMPLATE,
     CONCLUSION_TEMPLATE
 )
+
+
+def _build_image_figure(title: str, image_url: Optional[str]) -> str:
+    """Return a ready-to-use HTML figure for a remote recipe image."""
+    if not image_url:
+        return ""
+
+    caption = build_image_credit(image_url)
+    return (
+        '\n<figure style="margin: 10px 0; text-align: center;" '
+        'data-image-hosting="remote">'
+        f'\n<img src="{image_url}" alt="{title}" '
+        'width="1280" height="720" '
+        'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;" '
+        f'data-original-image-url="{image_url}">'
+        f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
+        '\n</figure>'
+    )
 
 def _deduplicate_recipes(recipes_list):
     """Remove duplicate recipe entries while preserving order."""
@@ -115,48 +136,10 @@ def generate_recipe_sections(recipes_list, context):
                 temperature=0.7
             )
             
-            # Get image URL from any of the possible image fields
-            image_url = None
-            
-            # Check direct URL fields first (prioritize Image Link)
-            for field in ['image_link', 'image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL', 'Image Link']:
-                if recipe.get(field):
-                    image_url = recipe.get(field)
-                    break
-            
-            # Check Airtable attachments (array of objects with URL property)
-            if not image_url and recipe.get('attachments'):
-                attachments = recipe.get('attachments')
-                if isinstance(attachments, list) and len(attachments) > 0:
-                    if isinstance(attachments[0], dict) and 'url' in attachments[0]:
-                        image_url = attachments[0]['url']
-                    elif isinstance(attachments[0], str):
-                        image_url = attachments[0]
-            
             section = f"<h2>{recipe['title']}</h2>"
-            
-            # Add image if available
-            if image_url and image_url.strip():
-                # Extract domain from image URL for credit
-                try:
-                    from urllib.parse import urlparse
-                    parsed_url = urlparse(image_url)
-                    domain = parsed_url.netloc
-                    if domain:
-                        caption = f"Image credit: {domain}"
-                    else:
-                        caption = "Image credit: Source"
-                except:
-                    caption = "Image credit: Source"
-                
-                section += f'\n<figure style="margin: 10px 0; text-align: center;">'
-                section += (
-                    f'\n<img src="{image_url}" alt="{recipe["title"]}" '
-                    f'width="1280" height="720" '
-                    f'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;">'
-                )
-                section += f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
-                section += f'\n</figure>'
+            image_url, _ = extract_remote_image_url(recipe)
+
+            section += _build_image_figure(recipe['title'], image_url)
             
             # Ensure content is properly formatted as HTML paragraph
             content = response.choices[0].message.content.strip()
@@ -173,48 +156,11 @@ def generate_recipe_sections(recipes_list, context):
             
         except Exception as e:
             print(f"Error generating section for {recipe['title']}: {e}")
-            # Get image URL from any of the possible image fields
-            image_url = None
-            
-            # Check direct URL fields first (prioritize Image Link)
-            for field in ['image_link', 'image_url', 'image', 'photo', 'picture', 'Image', 'Photo', 'Picture', 'Image URL', 'Image Link']:
-                if recipe.get(field):
-                    image_url = recipe.get(field)
-                    break
-            
-            # Check Airtable attachments (array of objects with URL property)
-            if not image_url and recipe.get('attachments'):
-                attachments = recipe.get('attachments')
-                if isinstance(attachments, list) and len(attachments) > 0:
-                    if isinstance(attachments[0], dict) and 'url' in attachments[0]:
-                        image_url = attachments[0]['url']
-                    elif isinstance(attachments[0], str):
-                        image_url = attachments[0]
-            
+            image_url, _ = extract_remote_image_url(recipe)
+
             fallback_section = f"<h2>{recipe['title']}</h2>"
-            
-            # Add image if available
-            if image_url and image_url.strip():
-                # Extract domain from image URL for credit
-                try:
-                    from urllib.parse import urlparse
-                    parsed_url = urlparse(image_url)
-                    domain = parsed_url.netloc
-                    if domain:
-                        caption = f"Image credit: {domain}"
-                    else:
-                        caption = "Image credit: Source"
-                except:
-                    caption = "Image credit: Source"
-                
-                fallback_section += f'\n<figure style="margin: 10px 0; text-align: center;">'
-                fallback_section += (
-                    f'\n<img src="{image_url}" alt="{recipe["title"]}" '
-                    f'width="1280" height="720" '
-                    f'style="width: 100%; max-width: 1280px; height: auto; border-radius: 8px; object-fit: cover;">'
-                )
-                fallback_section += f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
-                fallback_section += f'\n</figure>'
+
+            fallback_section += _build_image_figure(recipe['title'], image_url)
             
             # Create a concise fallback description (50-100 words)
             ingredients = recipe.get('ingredients', '')
