@@ -1,4 +1,19 @@
-"""Recipe article generation that preserves original Airtable image links."""
+"""Recipe article generation that preserves original Airtable image links.
+
+Preparing images for publishing now follows a pure hotlink workflow:
+
+1. `extract_remote_image_url` identifies the Airtable field that already holds
+   a publicly reachable asset and returns the untouched URL.
+2. We never download or mirror that asset. The URL is passed straight through
+   to HTML generation so WordPress (or any CMS) can embed it via `<img src>`
+   without touching the media library.
+3. `build_remote_image_figure` wraps the hotlinked URL in a `<figure>` element
+   and annotates it with provenance metadata for easy auditing.
+4. If a recipe has no usable URL we simply omit the figure while still
+   returning the textual section, preventing broken placeholders.
+5. The API layer exposes `image_hotlinks` metadata so automation scripts can
+   set featured images or galleries using the same remote links.
+"""
 
 from __future__ import annotations
 

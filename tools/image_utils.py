@@ -7,7 +7,7 @@ for downstream HTML generation or validation.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 # Fields that Airtable uses to store the original image URL. The order
@@ -117,3 +117,32 @@ def build_remote_image_figure(
         f'\n<figcaption style="font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic;">{caption}</figcaption>'
         '\n</figure>'
     )
+
+
+def collect_image_hotlinks(recipes: Iterable[Dict]) -> List[Dict[str, object]]:
+    """Return a normalized listing of remote image metadata.
+
+    The resulting dictionaries make it trivial for publishing pipelines or
+    WordPress automations to embed remote imagery without downloading it. Each
+    entry includes the remote URL along with the Airtable field that supplied
+    the link so downstream systems can decide how best to hotlink it.
+    """
+
+    hotlinks: List[Dict[str, object]] = []
+
+    for recipe in recipes:
+        image_url, airtable_field = extract_remote_image_url(recipe)
+        if not image_url:
+            continue
+
+        hotlinks.append(
+            {
+                "title": recipe.get("title", "Untitled Recipe"),
+                "image_url": image_url,
+                "airtable_field": airtable_field,
+                "hotlink": True,
+                "record_id": recipe.get("id") or recipe.get("record_id"),
+            }
+        )
+
+    return hotlinks

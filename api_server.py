@@ -17,7 +17,11 @@ import time
 import faiss
 from urllib.parse import urlparse
 
-from tools.image_utils import build_remote_image_figure, extract_remote_image_url
+from tools.image_utils import (
+    build_remote_image_figure,
+    collect_image_hotlinks,
+    extract_remote_image_url,
+)
 from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
 from urllib3.util import Retry
@@ -580,17 +584,7 @@ def generate_recipe_article():
         sources = [recipe.get('url') for recipe in top_recipes if recipe.get('url')]
 
         # Surface image hotlink information so downstream systems avoid re-hosting.
-        image_hotlinks = []
-        for recipe in top_recipes:
-            image_url, airtable_field = extract_remote_image_url(recipe)
-            if not image_url:
-                continue
-            image_hotlinks.append({
-                'title': recipe.get('title', 'Untitled Recipe'),
-                'image_url': image_url,
-                'airtable_field': airtable_field,
-                'hotlink': True,
-            })
+        image_hotlinks = collect_image_hotlinks(top_recipes)
 
         print("=== Recipe Query Completed Successfully ===")
 
